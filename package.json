@@ -1,0 +1,48 @@
+{
+	"name"            : "@detox/dht",
+	"description"     : "Recompiled webtorrent-dht for Detox's purposes",
+	"keywords"        : [
+		"detox",
+		"dht",
+		"webtorrent-dht"
+	],
+	"version"         : "0.1.0",
+	"homepage"        : "https://github.com/Detox/detox-dht",
+	"author"          : {
+		"name"  : "Nazar Mokrynskyi",
+		"email" : "nazar@mokrynskyi.com",
+		"url"   : "https://cleverstyle.org"
+	},
+	"repository"      : {
+		"type" : "git",
+		"url"  : "git://github.com/Detox/detox-dht.git"
+	},
+	"licenses"        : [
+		{
+			"type" : "MIT",
+			"url"  : "https://github.com/Detox/detox-dht/blob/master/license.txt"
+		}
+	],
+	"bugs"            : "https://github.com/Detox/detox-dht/issues",
+	"docs"            : "https://github.com/Detox/detox-dht",
+	"main"            : "src/index.js",
+	"files"           : [
+		"dist",
+		"src"
+	],
+	"dependencies"    : {
+		"webtorrent-dht" : "^0.8.1"
+	},
+	"devDependencies" : {
+		"browserify"  : "^14.5.0",
+		"del"         : "^3.0.0",
+		"gulp"        : "^3.9.1",
+		"gulp-rename" : "^1.2.2",
+		"gulp-tap"    : "^1.0.1",
+		"gulp-uglify" : "^3.0.0",
+		"uglify-es"   : "^3.1.10"
+	},
+	"jspm"            : {
+		"main" : "dist/detox-dht.browser.js"
+	}
+}
