@@ -2,7 +2,7 @@
 Recompiled webtorrent-dht for Detox's purposes
 
 Essentially [webtorrent-dht](https://github.com/nazar-pc/webtorrent-dht) with following tweaks for Detox project:
-* `bencode`, `simple-peer`, `webrtc-socket` and `webtorrent-dht` exported explicitly instead of just `webtorrent-dht` (in order to avoid loading loading the rest twice in browser)
+* `bencode`, `simple-peer`, `webrtc-socket`, `webtorrent-dht` and `Buffer` are exported explicitly instead of just `webtorrent-dht` (in order to avoid loading loading the rest twice in browser)
 * `simple-sha1` excluded from build, since Detox uses different hash function
 
 ## Contribution

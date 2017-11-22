@@ -15,6 +15,7 @@
     bencode: bencode,
     simplePeer: simplePeer,
     webrtcSocket: webrtcSocket,
-    webtorrentDht: webtorrentDht
+    webtorrentDht: webtorrentDht,
+    Buffer: Buffer
   };
 }).call(this);

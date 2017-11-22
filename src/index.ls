@@ -9,4 +9,4 @@ simple-peer		= require('simple-peer')
 webrtc-socket	= require('webtorrent-dht/webrtc-socket')
 webtorrent-dht	= require('webtorrent-dht')
 
-module.exports	= {bencode, simple-peer, webrtc-socket, webtorrent-dht}
+module.exports	= {bencode, simple-peer, webrtc-socket, webtorrent-dht, Buffer}
