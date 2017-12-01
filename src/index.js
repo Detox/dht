@@ -12,10 +12,10 @@
   webrtcSocket = require('webtorrent-dht/webrtc-socket');
   webtorrentDht = require('webtorrent-dht');
   module.exports = {
-    bencode: bencode,
-    simplePeer: simplePeer,
-    webrtcSocket: webrtcSocket,
-    webtorrentDht: webtorrentDht,
-    Buffer: Buffer
+    'bencode': bencode,
+    'simple-peer': simplePeer,
+    'webrtc-socket': webrtcSocket,
+    'webtorrent-dht': webtorrentDht,
+    'Buffer': Buffer
   };
 }).call(this);

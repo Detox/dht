@@ -6,7 +6,7 @@
 		"dht",
 		"webtorrent-dht"
 	],
-	"version"         : "0.4.0",
+	"version"         : "0.5.0",
 	"homepage"        : "https://github.com/Detox/detox-dht",
 	"author"          : {
 		"name"  : "Nazar Mokrynskyi",
