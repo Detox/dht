@@ -10600,8 +10600,6 @@ function hasOwnProperty(obj, prop) {
         var signal, e;
         try {
           signal = bencode.decode(data);
-          signal.sdp = String(signal.sdp);
-          signal.type = String(signal.type);
           debug('got signal message from WS (server): %s', signal);
           peer_connection.signal(signal);
         } catch (e$) {
@@ -10682,8 +10680,6 @@ function hasOwnProperty(obj, prop) {
               data = arg$.data;
               try {
                 signal = bencode.decode(data);
-                signal.sdp = String(signal.sdp);
-                signal.type = String(signal.type);
                 debug('got signal message from WS (client): %s', signal);
                 peer_connection.signal(signal);
               } catch (e$) {
@@ -10770,13 +10766,14 @@ function hasOwnProperty(obj, prop) {
     });
     x$.setMaxListeners(0);
     x$.signal = function(signal){
-      var extensions;
+      signal.sdp = String(signal.sdp);
+      signal.type = String(signal.type);
       if (signal.extensions) {
-        extensions = signal.extensions.map(function(extension){
+        signal.extensions = signal.extensions.map(function(extension){
           return extension + "";
         });
-        if (extensions.length) {
-          this$.emit('extensions_received', peer_connection, extensions);
+        if (signal.extensions.length) {
+          this$.emit('extensions_received', peer_connection, signal.extensions);
         }
       }
       this$._simple_peer_constructor.prototype.signal.call(peer_connection, signal);
