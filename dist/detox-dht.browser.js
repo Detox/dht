@@ -318,6 +318,7 @@ var randombytes = require('randombytes')
 var simpleSha1 = require('simple-sha1')
 
 var ROTATE_INTERVAL = 5 * 60 * 1000 // rotate secrets every 5 minutes
+var BUCKET_OUTDATED_TIMESPAN = 15 * 60 * 1000 // check nodes in bucket in 15 minutes old buckets
 
 inherits(DHT, EventEmitter)
 
@@ -344,11 +345,26 @@ function DHT (opts) {
   this._verify = opts.verify || null
   this._host = opts.host || null
   this._interval = setInterval(rotateSecrets, ROTATE_INTERVAL)
+  this._hash = opts.hash || sha1
+  this._bucketCheckInterval = null
+  this._bucketOutdatedTimeSpan = opts.timeBucketOutdated || BUCKET_OUTDATED_TIMESPAN
 
   this.listening = false
   this.destroyed = false
   this.nodeId = this._rpc.id
   this.nodes = this._rpc.nodes
+
+  this.nodes.on('ping', function (nodes, contact) {
+    self._debug('received ping', nodes, contact)
+    self._checkAndRemoveNodes(nodes, function (_, removed) {
+      if (removed) {
+        self._debug('added new node:', contact)
+        self.addNode(contact)
+      }
+
+      self._debug('no node added, all other nodes ok')
+    })
+  })
 
   process.nextTick(bootstrap)
 
@@ -386,13 +402,83 @@ function DHT (opts) {
   }
 }
 
+DHT.prototype._setBucketCheckInterval = function () {
+  var self = this
+  var interval = 1 * 60 * 1000 // check age of bucket every minute
+
+  this._bucketCheckInterval = setInterval(function () {
+    const diff = Date.now() - self._rpc.nodes.metadata.lastChange
+
+    if (diff >= self._bucketOutdatedTimeSpan) {
+      self._checkAndRemoveNodes(self.nodes.toArray(), function () {
+        if (self.nodes.toArray().length < 1) {
+          // node is currently isolated,
+          // retry with initial bootstrap nodes
+          self._bootstrap(true)
+        }
+      })
+    }
+  }, interval)
+}
+
+DHT.prototype.removeBucketCheckInterval = function () {
+  clearInterval(this._bucketCheckInterval)
+}
+
+DHT.prototype.updateBucketTimestamp = function () {
+  this._rpc.nodes.metadata.lastChange = Date.now()
+}
+
+DHT.prototype._checkAndRemoveNodes = function (nodes, cb) {
+  var self = this
+
+  this._checkNodes(nodes, function (_, node) {
+    if (node) self.removeNode(node.id)
+    cb(null, node)
+  })
+}
+
+DHT.prototype._checkNodes = function (nodes, cb) {
+  var self = this
+
+  function test (acc) {
+    if (!acc.length) {
+      return cb(null)
+    }
+
+    var current = acc.pop()
+
+    self._sendPing(current, function (err) {
+      if (!err) {
+        self.updateBucketTimestamp()
+        return test(acc)
+      }
+
+      // retry
+      self._sendPing(current, function (er) {
+        if (err) {
+          return cb(null, current)
+        }
+
+        self.updateBucketTimestamp()
+        return test(acc)
+      })
+    })
+  }
+
+  test(nodes)
+}
+
 DHT.prototype.addNode = function (node) {
   var self = this
   if (node.id) {
     node.id = toBuffer(node.id)
     var old = !!this._rpc.nodes.get(node.id)
     this._rpc.nodes.add(node)
-    if (!old) this.emit('node', node)
+    if (!old) {
+      this.emit('node', node)
+      this.updateBucketTimestamp()
+    }
     return
   }
   this._sendPing(node, function (_, node) {
@@ -411,6 +497,7 @@ DHT.prototype._sendPing = function (node, cb) {
     if (!pong.r || !pong.r.id || !Buffer.isBuffer(pong.r.id) || pong.r.id.length !== self._hashLength) {
       return cb(new Error('Bad reply'))
     }
+    self.updateBucketTimestamp()
     cb(null, {
       id: pong.r.id,
       host: node.host || node.address,
@@ -663,6 +750,9 @@ DHT.prototype.address = function () {
 // listen([port], [address], [onlistening])
 DHT.prototype.listen = function () {
   this._rpc.bind.apply(this._rpc, arguments)
+
+  this.updateBucketTimestamp()
+  this._setBucketCheckInterval()
 }
 
 DHT.prototype.destroy = function (cb) {
@@ -673,6 +763,7 @@ DHT.prototype.destroy = function (cb) {
   this.destroyed = true
   var self = this
   clearInterval(this._interval)
+  clearInterval(this._bucketCheckInterval)
   this._debug('destroying')
   this._rpc.destroy(function () {
     self.emit('close')
@@ -835,6 +926,8 @@ DHT.prototype._bootstrap = function (populate) {
   }, ready)
 
   function ready () {
+    if (self.ready) return
+
     self._debug('emit ready')
     self.ready = true
     self.emit('ready')
@@ -10810,6 +10903,12 @@ function hasOwnProperty(obj, prop) {
       }
       peer_connection = this._peer_connections[ip + ":" + port];
     }
+    if (this._connections_id_mapping[id]) {
+      if (this._connections_id_mapping[id] !== peer_connection) {
+        peer_connection.destroy();
+      }
+      return;
+    }
     this._connections_id_mapping[id] = peer_connection;
     peer_connection.id = id;
     peer_connection.on('close', function(){
@@ -10903,6 +11002,7 @@ function hasOwnProperty(obj, prop) {
 
 }).call(this,require("buffer").Buffer)
 },{"bencode":3,"buffer":10,"debug":13,"events":15,"inherits":18,"simple-peer":40,"wrtc":52,"ws":7}],51:[function(require,module,exports){
+(function (Buffer){
 // Generated by LiveScript 1.5.0
 /**
  * @package   WebTorrent DHT
@@ -10928,6 +11028,9 @@ function hasOwnProperty(obj, prop) {
       return new webtorrentDht(options);
     }
     options = Object.assign({}, options);
+    if (options.hash) {
+      options.idLength = options.hash(Buffer.from('')).length;
+    }
     options.krpc = options.krpc || kRpcWebrtc(options);
     bittorrentDht.call(this, options);
   }
@@ -10947,7 +11050,8 @@ function hasOwnProperty(obj, prop) {
   };
 }).call(this);
 
-},{"./k-rpc-webrtc":49,"bittorrent-dht":5,"inherits":18}],52:[function(require,module,exports){
+}).call(this,require("buffer").Buffer)
+},{"./k-rpc-webrtc":49,"bittorrent-dht":5,"buffer":10,"inherits":18}],52:[function(require,module,exports){
 var RTCIceCandidate       = window.mozRTCIceCandidate       || window.webkitRTCIceCandidate       || window.RTCIceCandidate;
 var RTCPeerConnection     = window.mozRTCPeerConnection     || window.webkitRTCPeerConnection     || window.RTCPeerConnection;
 var RTCSessionDescription = window.mozRTCSessionDescription || window.webkitRTCSessionDescription || window.RTCSessionDescription;
