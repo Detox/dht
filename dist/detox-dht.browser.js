@@ -10543,6 +10543,7 @@ function hasOwnProperty(obj, prop) {
     this._extensions = options.extensions || [];
     this._listeners = [];
     this._peer_connections = {};
+    this._all_peer_connections = new Set;
     this._ws_connections_aliases = {};
     this._pending_peer_connections = {};
     this._connections_id_mapping = {};
@@ -10582,7 +10583,7 @@ function hasOwnProperty(obj, prop) {
       this$.emit.apply(this$, ['error'].concat(slice$.call(arguments)));
     });
     x$.on('connection', function(ws_connection){
-      var x$, peer_connection;
+      var x$, peer_connection, y$, timeout;
       debug('accepted WS connection');
       x$ = peer_connection = this$._prepare_connection(true);
       x$.on('signal', function(signal){
@@ -10596,7 +10597,8 @@ function hasOwnProperty(obj, prop) {
           ws_connection.close();
         }
       });
-      ws_connection.on('message', function(data){
+      y$ = ws_connection;
+      y$.on('message', function(data){
         var signal, e;
         try {
           signal = bencode.decode(data);
@@ -10608,17 +10610,18 @@ function hasOwnProperty(obj, prop) {
           ws_connection.close();
         }
       });
-      setTimeout(function(){
+      y$.on('close', function(){
+        clearTimeout(timeout);
+      });
+      timeout = setTimeout(function(){
         ws_connection.close();
       }, this$._peer_connection_timeout);
     });
   };
   x$.close = function(){
-    var peer, ref$;
-    for (peer in ref$ = this._peer_connections) {
-      peer = ref$[peer];
+    this._all_peer_connections.forEach(function(peer){
       peer.destroy();
-    }
+    });
     if (this.ws_server) {
       this.ws_server.close();
     }
@@ -10649,7 +10652,7 @@ function hasOwnProperty(obj, prop) {
             debug('closed WS connection');
           };
           x$.onopen = function(){
-            var x$, peer_connection;
+            var x$, peer_connection, timeout;
             debug('opened WS connection');
             x$ = peer_connection = this$._prepare_connection(false);
             x$.on('signal', function(signal){
@@ -10675,6 +10678,9 @@ function hasOwnProperty(obj, prop) {
               this$.send(buffer, offset, length, remote_peer_info.port, remote_peer_info.address, callback);
               resolve(remote_peer_info);
             });
+            x$.on('close', function(){
+              clearTimeout(timeout);
+            });
             ws_connection.onmessage = function(arg$){
               var data, signal, e;
               data = arg$.data;
@@ -10688,7 +10694,7 @@ function hasOwnProperty(obj, prop) {
                 ws_connection.close();
               }
             };
-            setTimeout(function(){
+            timeout = setTimeout(function(){
               ws_connection.close();
               delete this$._pending_peer_connections[address + ":" + port];
               if (!peer_connection.connected) {
@@ -10707,9 +10713,9 @@ function hasOwnProperty(obj, prop) {
    * @return {SimplePeer}
    */
   x$._prepare_connection = function(initiator){
-    var x$, peer_connection, this$ = this;
+    var timeout, x$, peer_connection, this$ = this;
     debug('prepare connection, initiator: %s', initiator);
-    setTimeout(function(){
+    timeout = setTimeout(function(){
       if (!peer_connection.connected || !peer_connection._tags.size) {
         peer_connection.destroy();
       }
@@ -10746,7 +10752,7 @@ function hasOwnProperty(obj, prop) {
           data_decoded = bencode.decode(data);
           if (data_decoded.ws_server) {
             peer_connection.ws_server = {
-              host: data_decoded.ws_server.toString(),
+              host: data_decoded.ws_server.host.toString(),
               port: data_decoded.ws_server.port
             };
             return;
@@ -10764,6 +10770,10 @@ function hasOwnProperty(obj, prop) {
       debug('peer error: %o', arguments);
       this$.emit.apply(this$, ['error'].concat(slice$.call(arguments)));
     });
+    x$.on('close', function(){
+      clearTimeout(timeout);
+      this$._all_peer_connections['delete'](peer_connection);
+    });
     x$.setMaxListeners(0);
     x$.signal = function(signal){
       signal.sdp = String(signal.sdp);
@@ -10779,7 +10789,8 @@ function hasOwnProperty(obj, prop) {
       this$._simple_peer_constructor.prototype.signal.call(peer_connection, signal);
     };
     x$._tags = new Set;
-    return x$;
+    this._all_peer_connections.add(peer_connection);
+    return peer_connection;
   };
   /**
    * @param {string}	id
