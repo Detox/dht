@@ -345,8 +345,8 @@ function DHT (opts) {
   this._verify = opts.verify || null
   this._host = opts.host || null
   this._interval = setInterval(rotateSecrets, ROTATE_INTERVAL)
-  this._hash = opts.hash || sha1
-  this._bucketCheckInterval = null
+  this._runningBucketCheck = false
+  this._bucketCheckTimeout = null
   this._bucketOutdatedTimeSpan = opts.timeBucketOutdated || BUCKET_OUTDATED_TIMESPAN
 
   this.listening = false
@@ -406,23 +406,41 @@ DHT.prototype._setBucketCheckInterval = function () {
   var self = this
   var interval = 1 * 60 * 1000 // check age of bucket every minute
 
-  this._bucketCheckInterval = setInterval(function () {
+  this._runningBucketCheck = true
+  queueNext()
+
+  function checkBucket () {
     const diff = Date.now() - self._rpc.nodes.metadata.lastChange
 
-    if (diff >= self._bucketOutdatedTimeSpan) {
-      self._checkAndRemoveNodes(self.nodes.toArray(), function () {
-        if (self.nodes.toArray().length < 1) {
-          // node is currently isolated,
-          // retry with initial bootstrap nodes
-          self._bootstrap(true)
-        }
-      })
-    }
-  }, interval)
+    if (diff < self._bucketOutdatedTimeSpan) return queueNext()
+
+    self._pingAll(function () {
+      if (self.destroyed) return
+
+      if (self.nodes.toArray().length < 1) {
+        // node is currently isolated,
+        // retry with initial bootstrap nodes
+        self._bootstrap(true)
+      }
+
+      queueNext()
+    })
+  }
+
+  function queueNext () {
+    if (!self._runningBucketCheck || self.destroyed) return
+    var nextTimeout = Math.floor(Math.random() * interval + interval / 2)
+    self._bucketCheckTimeout = setTimeout(checkBucket, nextTimeout)
+  }
+}
+
+DHT.prototype._pingAll = function (cb) {
+  this._checkAndRemoveNodes(this.nodes.toArray(), cb)
 }
 
 DHT.prototype.removeBucketCheckInterval = function () {
-  clearInterval(this._bucketCheckInterval)
+  this._runningBucketCheck = false
+  clearTimeout(this._bucketCheckTimeout)
 }
 
 DHT.prototype.updateBucketTimestamp = function () {
@@ -492,11 +510,16 @@ DHT.prototype.removeNode = function (id) {
 
 DHT.prototype._sendPing = function (node, cb) {
   var self = this
+  var expectedId = node.id
   this._rpc.query(node, {q: 'ping'}, function (err, pong, node) {
     if (err) return cb(err)
     if (!pong.r || !pong.r.id || !Buffer.isBuffer(pong.r.id) || pong.r.id.length !== self._hashLength) {
       return cb(new Error('Bad reply'))
     }
+    if (Buffer.isBuffer(expectedId) && !expectedId.equals(pong.r.id)) {
+      return cb(new Error('Unexpected node id'))
+    }
+
     self.updateBucketTimestamp()
     cb(null, {
       id: pong.r.id,
@@ -763,7 +786,7 @@ DHT.prototype.destroy = function (cb) {
   this.destroyed = true
   var self = this
   clearInterval(this._interval)
-  clearInterval(this._bucketCheckInterval)
+  this.removeBucketCheckInterval()
   this._debug('destroying')
   this._rpc.destroy(function () {
     self.emit('close')
@@ -4590,9 +4613,13 @@ var dns = require('dns')
 var util = require('util')
 var events = require('events')
 var Buffer = require('safe-buffer').Buffer
+var equals = require('buffer-equals')
 
 var ETIMEDOUT = new Error('Query timed out')
 ETIMEDOUT.code = 'ETIMEDOUT'
+
+var EUNEXPECTEDNODE = new Error('Unexpected node id')
+EUNEXPECTEDNODE.code = 'EUNEXPECTEDNODE'
 
 module.exports = RPC
 
@@ -4683,6 +4710,14 @@ function RPC (opts) {
         var err = new Error(isArray ? message.e.join(' ') : 'Unknown error')
         err.code = isArray && message.e.length && typeof message.e[0] === 'number' ? message.e[0] : 0
         req.callback(err, message, rinfo, req.message)
+        self.emit('update')
+        self.emit('postupdate')
+        return
+      }
+
+      var rid = message.r && message.r.id
+      if (req.peer && req.peer.id && rid && !equals(req.peer.id, rid)) {
+        req.callback(EUNEXPECTEDNODE, null, rinfo)
         self.emit('update')
         self.emit('postupdate')
         return
@@ -4794,7 +4829,7 @@ RPC.prototype._resolveAndQuery = function (peer, query, cb) {
 
 function noop () {}
 
-},{"bencode":3,"dgram":8,"dns":8,"events":15,"net":8,"safe-buffer":39,"util":47}],24:[function(require,module,exports){
+},{"bencode":3,"buffer-equals":11,"dgram":8,"dns":8,"events":15,"net":8,"safe-buffer":39,"util":47}],24:[function(require,module,exports){
 (function (process){
 var socket = require('k-rpc-socket')
 var KBucket = require('k-bucket')
@@ -4872,7 +4907,7 @@ function RPC (opts) {
   }
 
   function addNode (data, peer) {
-    if (data && isNodeId(data.id, self._idLength) && !self.nodes.get(data.id)) {
+    if (data && isNodeId(data.id, self._idLength) && !self.nodes.get(data.id) && !equals(data.id, self.id)) {
       self._addNode({
         id: data.id,
         host: peer.address || peer.host,
@@ -5051,12 +5086,14 @@ RPC.prototype._closest = function (target, message, background, visit, cb) {
     pending--
     if (peer) queried[(peer.address || peer.host) + ':' + peer.port] = true // need this for bootstrap nodes
 
-    var r = res && res.r
-    if (!r) return
-
     if (peer && peer.id && self.nodes.get(peer.id)) {
-      if (err && err.code === 'ETIMEDOUT') self.nodes.remove(peer.id)
+      if (err && (err.code === 'EUNEXPECTEDNODE' || err.code === 'ETIMEDOUT')) {
+        self.nodes.remove(peer.id)
+      }
     }
+
+    var r = res && res.r
+    if (!r) return kick()
 
     if (!err && isNodeId(r.id, self._idLength)) {
       count++
