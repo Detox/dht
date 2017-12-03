@@ -10293,6 +10293,7 @@ function hasOwnProperty(obj, prop) {
    * @constructor
    */
   function kRpcSocketWebrtc(options){
+    var this$ = this;
     options == null && (options = {});
     if (!(this instanceof kRpcSocketWebrtc)) {
       return new kRpcSocketWebrtc(options);
@@ -10311,6 +10312,15 @@ function hasOwnProperty(obj, prop) {
       this.id = Buffer.from(options.id, 'hex');
     }
     options.socket = options.socket || webrtcSocket(options);
+    options.socket.on('update_websocket_request_peer', function(host, port, peer){
+      var i$, ref$, len$, request;
+      for (i$ = 0, len$ = (ref$ = this$._reqs).length; i$ < len$; ++i$) {
+        request = ref$[i$];
+        if (request.peer.host === host && request.peer.port === port) {
+          request.peer = peer;
+        }
+      }
+    });
     options.isIP = isIP;
     this._id_length = options.id.length;
     this._info_length = this._id_length + 6;
@@ -10345,12 +10355,12 @@ function hasOwnProperty(obj, prop) {
       }
       if (response.nodes) {
         if (response.nodes.length / this._info_length > signals.length) {
-          response.nodes.length = signals.length * this._info_length;
+          response.nodes = response.nodes.slice(0, signals.length * this._info_length);
         }
         peers = parse_nodes(response.nodes, this._id_length);
       } else if (response.values) {
         if (response.values.length > signals.length) {
-          response.values.length = signals.length;
+          response.values = response.values(0, signals.length);
         }
         peers = response.values.map(parse_info);
       } else {
@@ -10757,12 +10767,17 @@ function hasOwnProperty(obj, prop) {
     }
   };
   x$.send = function(buffer, offset, length, port, address, callback){
-    var this$ = this;
+    var peer_connection, this$ = this;
     if (this._peer_connections[address + ":" + port]) {
       this._peer_connections[address + ":" + port].send(buffer);
       callback();
     } else if (this._ws_connections_aliases[address + ":" + port]) {
-      this._ws_connections_aliases[address + ":" + port].send(buffer);
+      peer_connection = this._ws_connections_aliases[address + ":" + port];
+      this.emit('update_websocket_request_peer', address, port, {
+        host: peer_connection.remoteAddress,
+        port: peer_connection.remotePort
+      });
+      peer_connection.send(buffer);
       callback();
     } else if (this._pending_peer_connections[address + ":" + port]) {
       this._pending_peer_connections[address + ":" + port].then(function(peer){
@@ -10805,7 +10820,7 @@ function hasOwnProperty(obj, prop) {
                 reject();
                 return;
               }
-              this$.send(buffer, offset, length, remote_peer_info.port, remote_peer_info.address, callback);
+              this$.send(buffer, offset, length, port, address, callback);
               resolve(remote_peer_info);
             });
             x$.on('close', function(){
