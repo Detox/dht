@@ -6,7 +6,7 @@
 		"dht",
 		"webtorrent-dht"
 	],
-	"version"         : "0.6.3",
+	"version"         : "0.7.0",
 	"homepage"        : "https://github.com/Detox/detox-dht",
 	"author"          : {
 		"name"  : "Nazar Mokrynskyi",
@@ -31,16 +31,16 @@
 		"src"
 	],
 	"dependencies"    : {
-		"webtorrent-dht" : "^0.10.3"
+		"webtorrent-dht" : "^0.11.0"
 	},
 	"devDependencies" : {
-		"browserify"  : "^14.5.0",
+		"browserify"  : "^15.1.0",
 		"del"         : "^3.0.0",
 		"gulp"        : "^3.9.1",
 		"gulp-rename" : "^1.2.2",
 		"gulp-tap"    : "^1.0.1",
 		"gulp-uglify" : "^3.0.0",
-		"uglify-es"   : "^3.3.2"
+		"uglify-es"   : "^3.3.6"
 	},
 	"jspm"            : {
 		"main" : "dist/detox-dht.browser.js"
