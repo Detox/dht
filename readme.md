@@ -1,4 +1,4 @@
-# detox-dht
+# Detox DHT
 Recompiled webtorrent-dht for Detox's purposes
 
 Essentially [webtorrent-dht](https://github.com/nazar-pc/webtorrent-dht) with following tweaks for Detox project:

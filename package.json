@@ -7,11 +7,11 @@
 		"webtorrent-dht"
 	],
 	"version"         : "0.7.2",
-	"homepage"        : "https://github.com/Detox/detox-dht",
+	"homepage"        : "https://github.com/Detox/dht",
 	"author"          : "Nazar Mokrynskyi <nazar@mokrynskyi.com>",
 	"repository"      : {
 		"type" : "git",
-		"url"  : "git://github.com/Detox/detox-dht.git"
+		"url"  : "git://github.com/Detox/dht.git"
 	},
 	"license"         : "0BSD",
 	"main"            : "src/index.js",
