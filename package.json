@@ -6,7 +6,7 @@
 		"dht",
 		"webtorrent-dht"
 	],
-	"version"         : "0.8.0",
+	"version"         : "0.8.1",
 	"homepage"        : "https://github.com/Detox/dht",
 	"author"          : "Nazar Mokrynskyi <nazar@mokrynskyi.com>",
 	"repository"      : {
@@ -20,7 +20,7 @@
 		"src"
 	],
 	"dependencies"    : {
-		"webtorrent-dht" : "^0.12.0"
+		"webtorrent-dht" : "^0.12.1"
 	},
 	"devDependencies" : {
 		"build-gbu" : "^0.1.0"
