@@ -170,7 +170,7 @@ decode.buffer = function () {
 module.exports = decode
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":11}],2:[function(require,module,exports){
+},{"buffer":10}],2:[function(require,module,exports){
 var Buffer = require('safe-buffer').Buffer
 
 /**
@@ -285,7 +285,7 @@ encode.list = function (buffers, data) {
 
 module.exports = encode
 
-},{"safe-buffer":40}],3:[function(require,module,exports){
+},{"safe-buffer":31}],3:[function(require,module,exports){
 var bencode = module.exports
 
 bencode.encode = require('./encode')
@@ -316,7 +316,8 @@ var krpc = require('k-rpc')
 var LRU = require('lru')
 var randombytes = require('randombytes')
 var simpleSha1 = require('simple-sha1')
-var PeerStore = require('./peer-store')
+var records = require('record-cache')
+var low = require('last-one-wins')
 
 var ROTATE_INTERVAL = 5 * 60 * 1000 // rotate secrets every 5 minutes
 var BUCKET_OUTDATED_TIMESPAN = 15 * 60 * 1000 // check nodes in bucket in 15 minutes old buckets
@@ -331,9 +332,9 @@ function DHT (opts) {
 
   this._tables = LRU({maxAge: ROTATE_INTERVAL, max: opts.maxTables || 1000})
   this._values = LRU(opts.maxValues || 1000)
-  this._peers = new PeerStore({
-    maxAge: opts.maxAge || Infinity,
-    max: opts.maxPeers || 10000
+  this._peers = records({
+    maxAge: opts.maxAge || 0,
+    maxSize: opts.maxPeers || 10000
   })
 
   this._secrets = null
@@ -358,22 +359,35 @@ function DHT (opts) {
   this.nodeId = this._rpc.id
   this.nodes = this._rpc.nodes
 
-  this.nodes.on('ping', function (nodes, contact) {
-    self._debug('received ping', nodes, contact)
-    self._checkAndRemoveNodes(nodes, function (_, removed) {
-      if (removed) {
-        self._debug('added new node:', contact)
-        self.addNode(contact)
-      }
+  // ensure only *one* ping it running at the time to avoid infinite async
+  // ping recursion, and make the latest one is always ran, but inbetween ones
+  // are disregarded
+  var onping = low(ping)
 
-      self._debug('no node added, all other nodes ok')
-    })
+  this.nodes.on('ping', function (older, newer) {
+    onping({older: older, newer: newer})
   })
 
   process.nextTick(bootstrap)
 
   EventEmitter.call(this)
   this._debug('new DHT %s', this.nodeId)
+
+  function ping (opts, cb) {
+    var older = opts.older
+    var newer = opts.newer
+
+    self._debug('received ping', older, newer)
+    self._checkAndRemoveNodes(older, function (_, removed) {
+      if (removed) {
+        self._debug('added new node:', newer)
+        self.addNode(newer)
+      }
+
+      self._debug('no node added, all other nodes ok')
+      cb()
+    })
+  }
 
   function onlistening () {
     self.listening = true
@@ -682,8 +696,7 @@ DHT.prototype.get = function (key, opts, cb) {
       if (!verify || !r.sig || !r.k) return true
       if (!verify(r.sig, encodeSigData(r), r.k)) return true
       if (equals(hash(r.salt ? Buffer.concat([r.k, r.salt]) : r.k), key)) {
-        value = r
-        return false
+        if (!value || r.seq > value.seq) value = r
       }
     } else {
       if (equals(hash(bencode.encode(r.v)), key)) {
@@ -755,7 +768,7 @@ DHT.prototype.lookup = function (infoHash, cb) {
   }, onreply, cb)
 
   function emit (values, from) {
-    if (!values) values = self._peers.get(infoHash.toString('hex'))
+    if (!values) values = self._peers.get(infoHash.toString('hex'), 100)
     var peers = decodePeers(values)
     for (var i = 0; i < peers.length; i++) {
       self.emit('peer', peers[i], infoHash, from || null)
@@ -791,6 +804,7 @@ DHT.prototype.destroy = function (cb) {
   var self = this
   clearInterval(this._interval)
   this.removeBucketCheckInterval()
+  this._peers.destroy()
   this._debug('destroying')
   this._rpc.destroy(function () {
     self.emit('close')
@@ -1094,7 +1108,7 @@ function toBuffer (str) {
 }
 
 }).call(this,require('_process'))
-},{"./peer-store":6,"_process":29,"bencode":3,"buffer-equals":12,"debug":14,"events":16,"inherits":19,"k-bucket":23,"k-rpc":25,"lru":26,"randombytes":30,"safe-buffer":40,"simple-sha1":9}],5:[function(require,module,exports){
+},{"_process":28,"bencode":3,"buffer-equals":11,"debug":13,"events":15,"inherits":18,"k-bucket":22,"k-rpc":24,"last-one-wins":25,"lru":26,"randombytes":29,"record-cache":30,"safe-buffer":31,"simple-sha1":8}],5:[function(require,module,exports){
 var Client = require('./client')
 var Server = require('./server')
 
@@ -1102,95 +1116,7 @@ module.exports = Client
 module.exports.Client = Client
 module.exports.Server = Server
 
-},{"./client":4,"./server":7}],6:[function(require,module,exports){
-var LRU = require('lru')
-
-module.exports = PeerStore
-
-function PeerStore (opts) {
-  if (!(this instanceof PeerStore)) return new PeerStore(opts)
-  if (!opts) opts = {}
-  this.max = opts.max || 10000
-  this.maxAge = opts.maxAge || Infinity
-  this.used = 0
-  this.peers = LRU(Infinity)
-}
-
-PeerStore.prototype.add = function (key, peer) {
-  var peers = this.peers.get(key)
-
-  if (!peers) {
-    peers = {
-      values: [],
-      map: LRU(Infinity)
-    }
-    this.peers.set(key, peers)
-  }
-
-  var id = peer.toString('hex')
-  var node = peers.map.get(id)
-  if (node) {
-    node.modified = Date.now()
-    return
-  }
-
-  node = {index: peers.values.length, peer: peer, modified: Date.now()}
-  peers.map.set(id, node)
-  peers.values.push(node)
-  if (++this.used > this.max) this._evict()
-}
-
-PeerStore.prototype._evict = function () {
-  var a = this.peers.peek(this.peers.tail)
-  var b = a.map.remove(a.map.tail)
-  var values = a.values
-  swap(values, b.index, values.length - 1)
-  values.pop()
-  this.used--
-  if (!values.length) this.peers.remove(this.peers.tail)
-}
-
-PeerStore.prototype.get = function (key, n) {
-  var node = this.peers.get(key)
-  if (!node) return []
-  var picked = pick(this, node.values, n || 100)
-  if (picked.length) return picked
-  this.peers.remove(key)
-  return []
-}
-
-function swap (list, a, b) {
-  if (a === b) return
-  var tmp = list[a]
-  list[a] = list[b]
-  list[b] = tmp
-  list[a].index = a
-  list[b].index = b
-}
-
-function pick (self, values, n) {
-  var ptr = 0
-  var res = []
-  var now = Date.now()
-
-  while (values.length && res.length < n && ptr < values.length) {
-    var next = ptr + (Math.random() * (values.length - ptr)) | 0
-    var val = values[next]
-
-    if (now - val.modified < self.maxAge) {
-      res.push(val.peer)
-      swap(values, ptr++, next)
-    } else {
-      swap(values, values.length - 1, next)
-      values.pop()
-      self.used--
-    }
-  }
-
-  return res
-}
-
-},{"lru":26}],7:[function(require,module,exports){
+},{"./client":4,"./server":6}],6:[function(require,module,exports){
 /**
  * TODO: DHT Bootstrap Server
  *
@@ -1199,11 +1125,11 @@ function pick (self, values, n) {
  */
 module.exports = require('./client')
 
-},{"./client":4}],8:[function(require,module,exports){
+},{"./client":4}],7:[function(require,module,exports){
 
-},{}],9:[function(require,module,exports){
-arguments[4][8][0].apply(exports,arguments)
-},{"dup":8}],10:[function(require,module,exports){
+},{}],8:[function(require,module,exports){
+arguments[4][7][0].apply(exports,arguments)
+},{"dup":7}],9:[function(require,module,exports){
 'use strict'
 
 exports.byteLength = byteLength
@@ -1319,7 +1245,7 @@ function fromByteArray (uint8) {
   return parts.join('')
 }
 
-},{}],11:[function(require,module,exports){
+},{}],10:[function(require,module,exports){
 /*!
  * The buffer module from node.js, for the browser.
  *
@@ -3035,7 +2961,7 @@ function numberIsNaN (obj) {
   return obj !== obj // eslint-disable-line no-self-compare
 }
 
-},{"base64-js":10,"ieee754":18}],12:[function(require,module,exports){
+},{"base64-js":9,"ieee754":17}],11:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 module.exports = function (a, b) {
@@ -3065,7 +2991,7 @@ module.exports = function (a, b) {
 };
 
 }).call(this,{"isBuffer":require("../is-buffer/index.js")})
-},{"../is-buffer/index.js":20}],13:[function(require,module,exports){
+},{"../is-buffer/index.js":19}],12:[function(require,module,exports){
 (function (Buffer){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -3176,7 +3102,7 @@ function objectToString(o) {
 }
 
 }).call(this,{"isBuffer":require("../../is-buffer/index.js")})
-},{"../../is-buffer/index.js":20}],14:[function(require,module,exports){
+},{"../../is-buffer/index.js":19}],13:[function(require,module,exports){
 (function (process){
 /**
  * This is the web browser implementation of `debug()`.
@@ -3375,7 +3301,7 @@ function localstorage() {
 }
 
 }).call(this,require('_process'))
-},{"./debug":15,"_process":29}],15:[function(require,module,exports){
+},{"./debug":14,"_process":28}],14:[function(require,module,exports){
 
 /**
  * This is the common logic for both the Node.js and web browser
@@ -3602,7 +3528,7 @@ function coerce(val) {
   return val;
 }
 
-},{"ms":27}],16:[function(require,module,exports){
+},{"ms":27}],15:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -3906,7 +3832,7 @@ function isUndefined(arg) {
   return arg === void 0;
 }
 
-},{}],17:[function(require,module,exports){
+},{}],16:[function(require,module,exports){
 // originally pulled out of simple-peer
 
 module.exports = function getBrowserRTC () {
@@ -3923,7 +3849,7 @@ module.exports = function getBrowserRTC () {
   return wrtc
 }
 
-},{}],18:[function(require,module,exports){
+},{}],17:[function(require,module,exports){
 exports.read = function (buffer, offset, isLE, mLen, nBytes) {
   var e, m
   var eLen = nBytes * 8 - mLen - 1
@@ -4009,7 +3935,7 @@ exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
   buffer[offset + i - d] |= s * 128
 }
 
-},{}],19:[function(require,module,exports){
+},{}],18:[function(require,module,exports){
 if (typeof Object.create === 'function') {
   // implementation from standard node.js 'util' module
   module.exports = function inherits(ctor, superCtor) {
@@ -4034,7 +3960,7 @@ if (typeof Object.create === 'function') {
   }
 }
 
-},{}],20:[function(require,module,exports){
+},{}],19:[function(require,module,exports){
 /*!
  * Determine if an object is a Buffer
  *
@@ -4057,14 +3983,14 @@ function isSlowBuffer (obj) {
   return typeof obj.readFloatLE === 'function' && typeof obj.slice === 'function' && isBuffer(obj.slice(0, 0))
 }
 
-},{}],21:[function(require,module,exports){
+},{}],20:[function(require,module,exports){
 var toString = {}.toString;
 
 module.exports = Array.isArray || function (arr) {
   return toString.call(arr) == '[object Array]';
 };
 
-},{}],22:[function(require,module,exports){
+},{}],21:[function(require,module,exports){
 (function(module) {
 
     /**
@@ -4297,7 +4223,7 @@ module.exports = Array.isArray || function (arr) {
         future: testFuture
     };
 }(module));
-},{}],23:[function(require,module,exports){
+},{}],22:[function(require,module,exports){
 (function (Buffer){
 /*
 index.js - Kademlia DHT K-bucket implementation as a binary tree.
@@ -4630,7 +4556,7 @@ KBucket.prototype._update = function (node, index, contact) {
 }
 
 }).call(this,{"isBuffer":require("../is-buffer/index.js")})
-},{"../is-buffer/index.js":20,"buffer-equals":12,"events":16,"inherits":19,"randombytes":30}],24:[function(require,module,exports){
+},{"../is-buffer/index.js":19,"buffer-equals":11,"events":15,"inherits":18,"randombytes":29}],23:[function(require,module,exports){
 var dgram = require('dgram')
 var bencode = require('bencode')
 var isIP = require('net').isIP
@@ -4854,7 +4780,7 @@ RPC.prototype._resolveAndQuery = function (peer, query, cb) {
 
 function noop () {}
 
-},{"bencode":3,"buffer-equals":12,"dgram":9,"dns":9,"events":16,"net":9,"safe-buffer":40,"util":48}],25:[function(require,module,exports){
+},{"bencode":3,"buffer-equals":11,"dgram":8,"dns":8,"events":15,"net":8,"safe-buffer":31,"util":47}],24:[function(require,module,exports){
 (function (process){
 var socket = require('k-rpc-socket')
 var KBucket = require('k-bucket')
@@ -5213,7 +5139,53 @@ function toBuffer (str) {
 }
 
 }).call(this,require('_process'))
-},{"_process":29,"buffer-equals":12,"events":16,"k-bucket":23,"k-rpc-socket":24,"randombytes":30,"safe-buffer":40,"util":48}],26:[function(require,module,exports){
+},{"_process":28,"buffer-equals":11,"events":15,"k-bucket":22,"k-rpc-socket":23,"randombytes":29,"safe-buffer":31,"util":47}],25:[function(require,module,exports){
+module.exports = function (work) {
+  var pending = null
+  var callback = null
+  var callbacks = null
+  var next = null
+
+  return function (val, cb) {
+    next = val
+    update(cb || noop)
+  }
+
+  function update (cb) {
+    if (callback) {
+      if (!pending) pending = []
+      pending.push(cb)
+      return
+    }
+
+    var val = next
+    next = null
+    callback = cb
+    work(val, done)
+  }
+
+  function done (err) {
+    var cb = callback
+    var cbs = callbacks
+    callbacks = null
+    callback = null
+
+    if (pending) {
+      callbacks = pending
+      pending = null
+      update(noop)
+    }
+
+    if (cbs) {
+      for (var i = 0; i < cbs.length; i++) cbs[i](err)
+    }
+    cb(err)
+  }
+}
+
+function noop (_) {}
+
+},{}],26:[function(require,module,exports){
 var events = require('events')
 var inherits = require('inherits')
 
@@ -5360,7 +5332,7 @@ LRU.prototype.evict = function () {
   this.emit('evict', {key: key, value: value})
 }
 
-},{"events":16,"inherits":19}],27:[function(require,module,exports){
+},{"events":15,"inherits":18}],27:[function(require,module,exports){
 /**
  * Helpers.
  */
@@ -5515,53 +5487,6 @@ function plural(ms, n, name) {
 }
 
 },{}],28:[function(require,module,exports){
-(function (process){
-'use strict';
-
-if (!process.version ||
-    process.version.indexOf('v0.') === 0 ||
-    process.version.indexOf('v1.') === 0 && process.version.indexOf('v1.8.') !== 0) {
-  module.exports = nextTick;
-} else {
-  module.exports = process.nextTick;
-}
-
-function nextTick(fn, arg1, arg2, arg3) {
-  if (typeof fn !== 'function') {
-    throw new TypeError('"callback" argument must be a function');
-  }
-  var len = arguments.length;
-  var args, i;
-  switch (len) {
-  case 0:
-  case 1:
-    return process.nextTick(fn);
-  case 2:
-    return process.nextTick(function afterTickOne() {
-      fn.call(null, arg1);
-    });
-  case 3:
-    return process.nextTick(function afterTickTwo() {
-      fn.call(null, arg1, arg2);
-    });
-  case 4:
-    return process.nextTick(function afterTickThree() {
-      fn.call(null, arg1, arg2, arg3);
-    });
-  default:
-    args = new Array(len - 1);
-    i = 0;
-    while (i < args.length) {
-      args[i++] = arguments[i];
-    }
-    return process.nextTick(function afterTick() {
-      fn.apply(null, args);
-    });
-  }
-}
-
-}).call(this,require('_process'))
-},{"_process":29}],29:[function(require,module,exports){
 // shim for using process in browser
 var process = module.exports = {};
 
@@ -5747,7 +5672,7 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],30:[function(require,module,exports){
+},{}],29:[function(require,module,exports){
 (function (process,global){
 'use strict'
 
@@ -5789,7 +5714,1094 @@ function randomBytes (size, cb) {
 }
 
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"_process":29,"safe-buffer":40}],31:[function(require,module,exports){
+},{"_process":28,"safe-buffer":31}],30:[function(require,module,exports){
+(function (Buffer){
+var EMPTY = []
+
+module.exports = RecordCache
+
+function RecordSet () {
+  this.list = []
+  this.map = new Map()
+}
+
+RecordSet.prototype.add = function (record, value) {
+  var k = toString(record)
+  var r = this.map.get(record)
+  if (r) return false
+
+  r = {index: this.list.length, record: value || record}
+  this.list.push(r)
+  this.map.set(k, r)
+  return true
+}
+
+RecordSet.prototype.remove = function (record) {
+  var k = toString(record)
+  var r = this.map.get(record)
+  if (!r) return false
+
+  swap(this.list, r.index, this.list.length - 1)
+  this.list.pop()
+  this.map.delete(k)
+  return true
+}
+
+function RecordStore () {
+  this.records = new Map()
+  this.size = 0
+}
+
+RecordStore.prototype.add = function (name, record, value) {
+  var r = this.records.get(name)
+
+  if (!r) {
+    r = new RecordSet()
+    this.records.set(name, r)
+  }
+
+  if (r.add(record, value)) {
+    this.size++
+    return true
+  }
+
+  return false
+}
+
+RecordStore.prototype.remove = function (name, record, value) {
+  var r = this.records.get(name)
+  if (!r) return false
+
+  if (r.remove(record, value)) {
+    this.size--
+    if (!r.map.size) this.records.delete(name)
+    return true
+  }
+
+  return false
+}
+
+RecordStore.prototype.get = function (name) {
+  var r = this.records.get(name)
+  return r ? r.list : EMPTY
+}
+
+function RecordCache (opts) {
+  if (!(this instanceof RecordCache)) return new RecordCache(opts)
+  if (!opts) opts = {}
+
+  this.maxSize = opts.maxSize || Infinity
+  this.maxAge = opts.maxAge || 0
+
+  this._fresh = new RecordStore()
+  this._stale = new RecordStore()
+  this._interval = null
+
+  if (this.maxAge && this.maxAge < Infinity) {
+    // 2/3 gives us a span of 0.66-1.33 maxAge or avg maxAge
+    var tick = Math.ceil(2 / 3 * this.maxAge)
+    this._interval = setInterval(this._gc.bind(this), tick)
+    if (this._interval.unref) this._interval.unref()
+  }
+}
+
+Object.defineProperty(RecordCache.prototype, 'size', {
+  get: function () {
+    return this._fresh.size + this._stale.size
+  }
+})
+
+RecordCache.prototype.add = function (name, record, value) {
+  this._stale.remove(name, record, value)
+  if (this._fresh.add(name, record, value) && this._fresh.size > this.maxSize) {
+    this._gc()
+  }
+}
+
+RecordCache.prototype.remove = function (name, record, value) {
+  this._fresh.remove(name, record, value)
+  this._stale.remove(name, record, value)
+}
+
+RecordCache.prototype.get = function (name, n) {
+  var a = this._fresh.get(name)
+  var b = this._stale.get(name)
+  var aLen = a.length
+  var bLen = b.length
+  var len = aLen + bLen
+
+  if (n > len || !n) n = len
+  var result = new Array(n)
+
+  for (var i = 0; i < n; i++) {
+    var j = Math.floor(Math.random() * (aLen + bLen))
+    if (j < aLen) {
+      result[i] = a[j].record
+      swap(a, j, --aLen)
+    } else {
+      j -= aLen
+      result[i] = b[j].record
+      swap(b, j, --bLen)
+    }
+  }
+
+  return result
+}
+
+RecordCache.prototype._gc = function () {
+  this._stale = this._fresh
+  this._fresh = new RecordStore()
+}
+
+RecordCache.prototype.clear = function () {
+  this._gc()
+  this._gc()
+}
+
+RecordCache.prototype.destroy = function () {
+  this.clear()
+  clearInterval(this._interval)
+  this._interval = null
+}
+
+function toString (record) {
+  return Buffer.isBuffer(record) ? record.toString('hex') : record
+}
+
+function swap (list, a, b) {
+  var tmp = list[a]
+  tmp.index = b
+  list[b].index = a
+  list[a] = list[b]
+  list[b] = tmp
+}
+
+}).call(this,{"isBuffer":require("../is-buffer/index.js")})
+},{"../is-buffer/index.js":19}],31:[function(require,module,exports){
+/* eslint-disable node/no-deprecated-api */
+var buffer = require('buffer')
+var Buffer = buffer.Buffer
+
+// alternative to using Object.keys for old browsers
+function copyProps (src, dst) {
+  for (var key in src) {
+    dst[key] = src[key]
+  }
+}
+if (Buffer.from && Buffer.alloc && Buffer.allocUnsafe && Buffer.allocUnsafeSlow) {
+  module.exports = buffer
+} else {
+  // Copy properties from require('buffer')
+  copyProps(buffer, exports)
+  exports.Buffer = SafeBuffer
+}
+
+function SafeBuffer (arg, encodingOrOffset, length) {
+  return Buffer(arg, encodingOrOffset, length)
+}
+
+// Copy static methods from Buffer
+copyProps(Buffer, SafeBuffer)
+
+SafeBuffer.from = function (arg, encodingOrOffset, length) {
+  if (typeof arg === 'number') {
+    throw new TypeError('Argument must not be a number')
+  }
+  return Buffer(arg, encodingOrOffset, length)
+}
+
+SafeBuffer.alloc = function (size, fill, encoding) {
+  if (typeof size !== 'number') {
+    throw new TypeError('Argument must be a number')
+  }
+  var buf = Buffer(size)
+  if (fill !== undefined) {
+    if (typeof encoding === 'string') {
+      buf.fill(fill, encoding)
+    } else {
+      buf.fill(fill)
+    }
+  } else {
+    buf.fill(0)
+  }
+  return buf
+}
+
+SafeBuffer.allocUnsafe = function (size) {
+  if (typeof size !== 'number') {
+    throw new TypeError('Argument must be a number')
+  }
+  return Buffer(size)
+}
+
+SafeBuffer.allocUnsafeSlow = function (size) {
+  if (typeof size !== 'number') {
+    throw new TypeError('Argument must be a number')
+  }
+  return buffer.SlowBuffer(size)
+}
+
+},{"buffer":10}],32:[function(require,module,exports){
+(function (Buffer){
+module.exports = Peer
+
+var debug = require('debug')('simple-peer')
+var getBrowserRTC = require('get-browser-rtc')
+var inherits = require('inherits')
+var randombytes = require('randombytes')
+var stream = require('readable-stream')
+
+var MAX_BUFFERED_AMOUNT = 64 * 1024
+
+inherits(Peer, stream.Duplex)
+
+/**
+ * WebRTC peer connection. Same API as node core `net.Socket`, plus a few extra methods.
+ * Duplex stream.
+ * @param {Object} opts
+ */
+function Peer (opts) {
+  var self = this
+  if (!(self instanceof Peer)) return new Peer(opts)
+
+  self._id = randombytes(4).toString('hex').slice(0, 7)
+  self._debug('new peer %o', opts)
+
+  opts = Object.assign({
+    allowHalfOpen: false
+  }, opts)
+
+  stream.Duplex.call(self, opts)
+
+  self.channelName = opts.initiator
+    ? opts.channelName || randombytes(20).toString('hex')
+    : null
+
+  // Needed by _transformConstraints, so set this early
+  self._isChromium = typeof window !== 'undefined' && !!window.webkitRTCPeerConnection
+
+  self.initiator = opts.initiator || false
+  self.channelConfig = opts.channelConfig || Peer.channelConfig
+  self.config = opts.config || Peer.config
+  self.constraints = self._transformConstraints(opts.constraints || Peer.constraints)
+  self.offerConstraints = self._transformConstraints(opts.offerConstraints || {})
+  self.answerConstraints = self._transformConstraints(opts.answerConstraints || {})
+  self.reconnectTimer = opts.reconnectTimer || false
+  self.sdpTransform = opts.sdpTransform || function (sdp) { return sdp }
+  self.stream = opts.stream || false
+  self.trickle = opts.trickle !== undefined ? opts.trickle : true
+
+  self.destroyed = false
+  self.connected = false
+
+  self.remoteAddress = undefined
+  self.remoteFamily = undefined
+  self.remotePort = undefined
+  self.localAddress = undefined
+  self.localPort = undefined
+
+  self._wrtc = (opts.wrtc && typeof opts.wrtc === 'object')
+    ? opts.wrtc
+    : getBrowserRTC()
+
+  if (!self._wrtc) {
+    if (typeof window === 'undefined') {
+      throw new Error('No WebRTC support: Specify `opts.wrtc` option in this environment')
+    } else {
+      throw new Error('No WebRTC support: Not a supported browser')
+    }
+  }
+
+  self._pcReady = false
+  self._channelReady = false
+  self._iceComplete = false // ice candidate trickle done (got null candidate)
+  self._channel = null
+  self._pendingCandidates = []
+  self._previousStreams = []
+
+  self._chunk = null
+  self._cb = null
+  self._interval = null
+  self._reconnectTimeout = null
+
+  self._pc = new (self._wrtc.RTCPeerConnection)(self.config, self.constraints)
+
+  // We prefer feature detection whenever possible, but sometimes that's not
+  // possible for certain implementations.
+  self._isWrtc = Array.isArray(self._pc.RTCIceConnectionStates)
+  self._isReactNativeWebrtc = typeof self._pc._peerConnectionId === 'number'
+
+  self._pc.oniceconnectionstatechange = function () {
+    self._onIceStateChange()
+  }
+  self._pc.onicegatheringstatechange = function () {
+    self._onIceStateChange()
+  }
+  self._pc.onsignalingstatechange = function () {
+    self._onSignalingStateChange()
+  }
+  self._pc.onicecandidate = function (event) {
+    self._onIceCandidate(event)
+  }
+
+  // Other spec events, unused by this implementation:
+  // - onconnectionstatechange
+  // - onicecandidateerror
+  // - onfingerprintfailure
+
+  if (self.initiator) {
+    var createdOffer = false
+    self._pc.onnegotiationneeded = function () {
+      if (!createdOffer) self._createOffer()
+      createdOffer = true
+    }
+
+    self._setupData({
+      channel: self._pc.createDataChannel(self.channelName, self.channelConfig)
+    })
+  } else {
+    self._pc.ondatachannel = function (event) {
+      self._setupData(event)
+    }
+  }
+
+  if ('addTrack' in self._pc) {
+    // WebRTC Spec, Firefox
+    if (self.stream) {
+      self.stream.getTracks().forEach(function (track) {
+        self._pc.addTrack(track, self.stream)
+      })
+    }
+    self._pc.ontrack = function (event) {
+      self._onTrack(event)
+    }
+  } else {
+    // Chrome, etc. This can be removed once all browsers support `ontrack`
+    if (self.stream) self._pc.addStream(self.stream)
+    self._pc.onaddstream = function (event) {
+      self._onAddStream(event)
+    }
+  }
+
+  // HACK: wrtc doesn't fire the 'negotionneeded' event
+  if (self.initiator && self._isWrtc) {
+    self._pc.onnegotiationneeded()
+  }
+
+  self._onFinishBound = function () {
+    self._onFinish()
+  }
+  self.once('finish', self._onFinishBound)
+}
+
+Peer.WEBRTC_SUPPORT = !!getBrowserRTC()
+
+/**
+ * Expose config, constraints, and data channel config for overriding all Peer
+ * instances. Otherwise, just set opts.config, opts.constraints, or opts.channelConfig
+ * when constructing a Peer.
+ */
+Peer.config = {
+  iceServers: [
+    {
+      urls: 'stun:stun.l.google.com:19302'
+    },
+    {
+      urls: 'stun:global.stun.twilio.com:3478?transport=udp'
+    }
+  ]
+}
+Peer.constraints = {}
+Peer.channelConfig = {}
+
+Object.defineProperty(Peer.prototype, 'bufferSize', {
+  get: function () {
+    var self = this
+    return (self._channel && self._channel.bufferedAmount) || 0
+  }
+})
+
+Peer.prototype.address = function () {
+  var self = this
+  return { port: self.localPort, family: 'IPv4', address: self.localAddress }
+}
+
+Peer.prototype.signal = function (data) {
+  var self = this
+  if (self.destroyed) throw new Error('cannot signal after peer is destroyed')
+  if (typeof data === 'string') {
+    try {
+      data = JSON.parse(data)
+    } catch (err) {
+      data = {}
+    }
+  }
+  self._debug('signal()')
+
+  if (data.candidate) {
+    if (self._pc.remoteDescription && self._pc.remoteDescription.type) self._addIceCandidate(data.candidate)
+    else self._pendingCandidates.push(data.candidate)
+  }
+  if (data.sdp) {
+    self._pc.setRemoteDescription(new (self._wrtc.RTCSessionDescription)(data), function () {
+      if (self.destroyed) return
+
+      self._pendingCandidates.forEach(function (candidate) {
+        self._addIceCandidate(candidate)
+      })
+      self._pendingCandidates = []
+
+      if (self._pc.remoteDescription.type === 'offer') self._createAnswer()
+    }, function (err) { self.destroy(err) })
+  }
+  if (!data.sdp && !data.candidate) {
+    self.destroy(new Error('signal() called with invalid signal data'))
+  }
+}
+
+Peer.prototype._addIceCandidate = function (candidate) {
+  var self = this
+  try {
+    self._pc.addIceCandidate(
+      new self._wrtc.RTCIceCandidate(candidate),
+      noop,
+      function (err) { self.destroy(err) }
+    )
+  } catch (err) {
+    self.destroy(new Error('error adding candidate: ' + err.message))
+  }
+}
+
+/**
+ * Send text/binary data to the remote peer.
+ * @param {TypedArrayView|ArrayBuffer|Buffer|string|Blob|Object} chunk
+ */
+Peer.prototype.send = function (chunk) {
+  var self = this
+  self._channel.send(chunk)
+}
+
+// TODO: Delete this method once readable-stream is updated to contain a default
+// implementation of destroy() that automatically calls _destroy()
+// See: https://github.com/nodejs/readable-stream/issues/283
+Peer.prototype.destroy = function (err) {
+  var self = this
+  self._destroy(err, function () {})
+}
+
+Peer.prototype._destroy = function (err, cb) {
+  var self = this
+  if (self.destroyed) return
+
+  self._debug('destroy (error: %s)', err && (err.message || err))
+
+  self.readable = self.writable = false
+
+  if (!self._readableState.ended) self.push(null)
+  if (!self._writableState.finished) self.end()
+
+  self.destroyed = true
+  self.connected = false
+  self._pcReady = false
+  self._channelReady = false
+  self._previousStreams = null
+
+  clearInterval(self._interval)
+  clearTimeout(self._reconnectTimeout)
+  self._interval = null
+  self._reconnectTimeout = null
+  self._chunk = null
+  self._cb = null
+
+  if (self._onFinishBound) self.removeListener('finish', self._onFinishBound)
+  self._onFinishBound = null
+
+  if (self._pc) {
+    try {
+      self._pc.close()
+    } catch (err) {}
+
+    self._pc.oniceconnectionstatechange = null
+    self._pc.onicegatheringstatechange = null
+    self._pc.onsignalingstatechange = null
+    self._pc.onicecandidate = null
+    if ('addTrack' in self._pc) {
+      self._pc.ontrack = null
+    } else {
+      self._pc.onaddstream = null
+    }
+    self._pc.onnegotiationneeded = null
+    self._pc.ondatachannel = null
+  }
+
+  if (self._channel) {
+    try {
+      self._channel.close()
+    } catch (err) {}
+
+    self._channel.onmessage = null
+    self._channel.onopen = null
+    self._channel.onclose = null
+    self._channel.onerror = null
+  }
+  self._pc = null
+  self._channel = null
+
+  if (err) self.emit('error', err)
+  self.emit('close')
+  cb()
+}
+
+Peer.prototype._setupData = function (event) {
+  var self = this
+  if (!event.channel) {
+    // In some situations `pc.createDataChannel()` returns `undefined` (in wrtc),
+    // which is invalid behavior. Handle it gracefully.
+    // See: https://github.com/feross/simple-peer/issues/163
+    return self.destroy(new Error('Data channel event is missing `channel` property'))
+  }
+
+  self._channel = event.channel
+  self._channel.binaryType = 'arraybuffer'
+
+  if (typeof self._channel.bufferedAmountLowThreshold === 'number') {
+    self._channel.bufferedAmountLowThreshold = MAX_BUFFERED_AMOUNT
+  }
+
+  self.channelName = self._channel.label
+
+  self._channel.onmessage = function (event) {
+    self._onChannelMessage(event)
+  }
+  self._channel.onbufferedamountlow = function () {
+    self._onChannelBufferedAmountLow()
+  }
+  self._channel.onopen = function () {
+    self._onChannelOpen()
+  }
+  self._channel.onclose = function () {
+    self._onChannelClose()
+  }
+  self._channel.onerror = function (err) {
+    self.destroy(err)
+  }
+}
+
+Peer.prototype._read = function () {}
+
+Peer.prototype._write = function (chunk, encoding, cb) {
+  var self = this
+  if (self.destroyed) return cb(new Error('cannot write after peer is destroyed'))
+
+  if (self.connected) {
+    try {
+      self.send(chunk)
+    } catch (err) {
+      return self.destroy(err)
+    }
+    if (self._channel.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+      self._debug('start backpressure: bufferedAmount %d', self._channel.bufferedAmount)
+      self._cb = cb
+    } else {
+      cb(null)
+    }
+  } else {
+    self._debug('write before connect')
+    self._chunk = chunk
+    self._cb = cb
+  }
+}
+
+// When stream finishes writing, close socket. Half open connections are not
+// supported.
+Peer.prototype._onFinish = function () {
+  var self = this
+  if (self.destroyed) return
+
+  if (self.connected) {
+    destroySoon()
+  } else {
+    self.once('connect', destroySoon)
+  }
+
+  // Wait a bit before destroying so the socket flushes.
+  // TODO: is there a more reliable way to accomplish this?
+  function destroySoon () {
+    setTimeout(function () {
+      self.destroy()
+    }, 1000)
+  }
+}
+
+Peer.prototype._createOffer = function () {
+  var self = this
+  if (self.destroyed) return
+
+  self._pc.createOffer(function (offer) {
+    if (self.destroyed) return
+    offer.sdp = self.sdpTransform(offer.sdp)
+    self._pc.setLocalDescription(offer, onSuccess, onError)
+
+    function onSuccess () {
+      if (self.destroyed) return
+      if (self.trickle || self._iceComplete) sendOffer()
+      else self.once('_iceComplete', sendOffer) // wait for candidates
+    }
+
+    function onError (err) {
+      self.destroy(err)
+    }
+
+    function sendOffer () {
+      var signal = self._pc.localDescription || offer
+      self._debug('signal')
+      self.emit('signal', {
+        type: signal.type,
+        sdp: signal.sdp
+      })
+    }
+  }, function (err) { self.destroy(err) }, self.offerConstraints)
+}
+
+Peer.prototype._createAnswer = function () {
+  var self = this
+  if (self.destroyed) return
+
+  self._pc.createAnswer(function (answer) {
+    if (self.destroyed) return
+    answer.sdp = self.sdpTransform(answer.sdp)
+    self._pc.setLocalDescription(answer, onSuccess, onError)
+
+    function onSuccess () {
+      if (self.destroyed) return
+      if (self.trickle || self._iceComplete) sendAnswer()
+      else self.once('_iceComplete', sendAnswer)
+    }
+
+    function onError (err) {
+      self.destroy(err)
+    }
+
+    function sendAnswer () {
+      var signal = self._pc.localDescription || answer
+      self._debug('signal')
+      self.emit('signal', {
+        type: signal.type,
+        sdp: signal.sdp
+      })
+    }
+  }, function (err) { self.destroy(err) }, self.answerConstraints)
+}
+
+Peer.prototype._onIceStateChange = function () {
+  var self = this
+  if (self.destroyed) return
+  var iceConnectionState = self._pc.iceConnectionState
+  var iceGatheringState = self._pc.iceGatheringState
+
+  self._debug(
+    'iceStateChange (connection: %s) (gathering: %s)',
+    iceConnectionState,
+    iceGatheringState
+  )
+  self.emit('iceStateChange', iceConnectionState, iceGatheringState)
+
+  if (iceConnectionState === 'connected' || iceConnectionState === 'completed') {
+    clearTimeout(self._reconnectTimeout)
+    self._pcReady = true
+    self._maybeReady()
+  }
+  if (iceConnectionState === 'disconnected') {
+    if (self.reconnectTimer) {
+      // If user has set `opt.reconnectTimer`, allow time for ICE to attempt a reconnect
+      clearTimeout(self._reconnectTimeout)
+      self._reconnectTimeout = setTimeout(function () {
+        self.destroy()
+      }, self.reconnectTimer)
+    } else {
+      self.destroy()
+    }
+  }
+  if (iceConnectionState === 'failed') {
+    self.destroy(new Error('Ice connection failed.'))
+  }
+  if (iceConnectionState === 'closed') {
+    self.destroy()
+  }
+}
+
+Peer.prototype.getStats = function (cb) {
+  var self = this
+
+  // Promise-based getStats() (standard)
+  if (self._pc.getStats.length === 0) {
+    self._pc.getStats().then(function (res) {
+      var reports = []
+      res.forEach(function (report) {
+        reports.push(report)
+      })
+      cb(null, reports)
+    }, function (err) { cb(err) })
+
+  // Two-parameter callback-based getStats() (deprecated, former standard)
+  } else if (self._isReactNativeWebrtc) {
+    self._pc.getStats(null, function (res) {
+      var reports = []
+      res.forEach(function (report) {
+        reports.push(report)
+      })
+      cb(null, reports)
+    }, function (err) { cb(err) })
+
+  // Single-parameter callback-based getStats() (non-standard)
+  } else if (self._pc.getStats.length > 0) {
+    self._pc.getStats(function (res) {
+      // If we destroy connection in `connect` callback this code might happen to run when actual connection is already closed
+      if (self.destroyed) return
+
+      var reports = []
+      res.result().forEach(function (result) {
+        var report = {}
+        result.names().forEach(function (name) {
+          report[name] = result.stat(name)
+        })
+        report.id = result.id
+        report.type = result.type
+        report.timestamp = result.timestamp
+        reports.push(report)
+      })
+      cb(null, reports)
+    }, function (err) { cb(err) })
+
+  // Unknown browser, skip getStats() since it's anyone's guess which style of
+  // getStats() they implement.
+  } else {
+    cb(null, [])
+  }
+}
+
+Peer.prototype._maybeReady = function () {
+  var self = this
+  self._debug('maybeReady pc %s channel %s', self._pcReady, self._channelReady)
+  if (self.connected || self._connecting || !self._pcReady || !self._channelReady) return
+
+  self._connecting = true
+
+  // HACK: We can't rely on order here, for details see https://github.com/js-platform/node-webrtc/issues/339
+  function findCandidatePair () {
+    if (self.destroyed) return
+
+    self.getStats(function (err, items) {
+      if (self.destroyed) return
+
+      // Treat getStats error as non-fatal. It's not essential.
+      if (err) items = []
+
+      var remoteCandidates = {}
+      var localCandidates = {}
+      var candidatePairs = {}
+      var foundSelectedCandidatePair = false
+
+      items.forEach(function (item) {
+        // TODO: Once all browsers support the hyphenated stats report types, remove
+        // the non-hypenated ones
+        if (item.type === 'remotecandidate' || item.type === 'remote-candidate') {
+          remoteCandidates[item.id] = item
+        }
+        if (item.type === 'localcandidate' || item.type === 'local-candidate') {
+          localCandidates[item.id] = item
+        }
+        if (item.type === 'candidatepair' || item.type === 'candidate-pair') {
+          candidatePairs[item.id] = item
+        }
+      })
+
+      items.forEach(function (item) {
+        // Spec-compliant
+        if (item.type === 'transport') {
+          setSelectedCandidatePair(candidatePairs[item.selectedCandidatePairId])
+        }
+
+        // Old implementations
+        if (
+          (item.type === 'googCandidatePair' && item.googActiveConnection === 'true') ||
+          ((item.type === 'candidatepair' || item.type === 'candidate-pair') && item.selected)
+        ) {
+          setSelectedCandidatePair(item)
+        }
+      })
+
+      function setSelectedCandidatePair (selectedCandidatePair) {
+        foundSelectedCandidatePair = true
+
+        var local = localCandidates[selectedCandidatePair.localCandidateId]
+
+        if (local && local.ip) {
+          // Spec
+          self.localAddress = local.ip
+          self.localPort = Number(local.port)
+        } else if (local && local.ipAddress) {
+          // Firefox
+          self.localAddress = local.ipAddress
+          self.localPort = Number(local.portNumber)
+        } else if (typeof selectedCandidatePair.googLocalAddress === 'string') {
+          // TODO: remove this once Chrome 58 is released
+          local = selectedCandidatePair.googLocalAddress.split(':')
+          self.localAddress = local[0]
+          self.localPort = Number(local[1])
+        }
+
+        var remote = remoteCandidates[selectedCandidatePair.remoteCandidateId]
+
+        if (remote && remote.ip) {
+          // Spec
+          self.remoteAddress = remote.ip
+          self.remotePort = Number(remote.port)
+        } else if (remote && remote.ipAddress) {
+          // Firefox
+          self.remoteAddress = remote.ipAddress
+          self.remotePort = Number(remote.portNumber)
+        } else if (typeof selectedCandidatePair.googRemoteAddress === 'string') {
+          // TODO: remove this once Chrome 58 is released
+          remote = selectedCandidatePair.googRemoteAddress.split(':')
+          self.remoteAddress = remote[0]
+          self.remotePort = Number(remote[1])
+        }
+        self.remoteFamily = 'IPv4'
+
+        self._debug(
+          'connect local: %s:%s remote: %s:%s',
+          self.localAddress, self.localPort, self.remoteAddress, self.remotePort
+        )
+      }
+
+      // Ignore candidate pair selection in browsers like Safari 11 that do not have any local or remote candidates
+      // But wait until at least 1 candidate pair is available
+      if (!foundSelectedCandidatePair && (!Object.keys(candidatePairs).length || Object.keys(localCandidates).length)) {
+        setTimeout(findCandidatePair, 100)
+        return
+      } else {
+        self._connecting = false
+        self.connected = true
+      }
+
+      if (self._chunk) {
+        try {
+          self.send(self._chunk)
+        } catch (err) {
+          return self.destroy(err)
+        }
+        self._chunk = null
+        self._debug('sent chunk from "write before connect"')
+
+        var cb = self._cb
+        self._cb = null
+        cb(null)
+      }
+
+      // If `bufferedAmountLowThreshold` and 'onbufferedamountlow' are unsupported,
+      // fallback to using setInterval to implement backpressure.
+      if (typeof self._channel.bufferedAmountLowThreshold !== 'number') {
+        self._interval = setInterval(function () { self._onInterval() }, 150)
+        if (self._interval.unref) self._interval.unref()
+      }
+
+      self._debug('connect')
+      self.emit('connect')
+    })
+  }
+  findCandidatePair()
+}
+
+Peer.prototype._onInterval = function () {
+  var self = this
+  if (!self._cb || !self._channel || self._channel.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+    return
+  }
+  self._onChannelBufferedAmountLow()
+}
+
+Peer.prototype._onSignalingStateChange = function () {
+  var self = this
+  if (self.destroyed) return
+  self._debug('signalingStateChange %s', self._pc.signalingState)
+  self.emit('signalingStateChange', self._pc.signalingState)
+}
+
+Peer.prototype._onIceCandidate = function (event) {
+  var self = this
+  if (self.destroyed) return
+  if (event.candidate && self.trickle) {
+    self.emit('signal', {
+      candidate: {
+        candidate: event.candidate.candidate,
+        sdpMLineIndex: event.candidate.sdpMLineIndex,
+        sdpMid: event.candidate.sdpMid
+      }
+    })
+  } else if (!event.candidate) {
+    self._iceComplete = true
+    self.emit('_iceComplete')
+  }
+}
+
+Peer.prototype._onChannelMessage = function (event) {
+  var self = this
+  if (self.destroyed) return
+  var data = event.data
+  if (data instanceof ArrayBuffer) data = Buffer.from(data)
+  self.push(data)
+}
+
+Peer.prototype._onChannelBufferedAmountLow = function () {
+  var self = this
+  if (self.destroyed || !self._cb) return
+  self._debug('ending backpressure: bufferedAmount %d', self._channel.bufferedAmount)
+  var cb = self._cb
+  self._cb = null
+  cb(null)
+}
+
+Peer.prototype._onChannelOpen = function () {
+  var self = this
+  if (self.connected || self.destroyed) return
+  self._debug('on channel open')
+  self._channelReady = true
+  self._maybeReady()
+}
+
+Peer.prototype._onChannelClose = function () {
+  var self = this
+  if (self.destroyed) return
+  self._debug('on channel close')
+  self.destroy()
+}
+
+Peer.prototype._onAddStream = function (event) {
+  var self = this
+  if (self.destroyed) return
+  self._debug('on add stream')
+  self.emit('stream', event.stream)
+}
+
+Peer.prototype._onTrack = function (event) {
+  var self = this
+  if (self.destroyed) return
+  self._debug('on track')
+  var id = event.streams[0].id
+  if (self._previousStreams.indexOf(id) !== -1) return // Only fire one 'stream' event, even though there may be multiple tracks per stream
+  self._previousStreams.push(id)
+  self.emit('stream', event.streams[0])
+}
+
+Peer.prototype._debug = function () {
+  var self = this
+  var args = [].slice.call(arguments)
+  args[0] = '[' + self._id + '] ' + args[0]
+  debug.apply(null, args)
+}
+
+// Transform constraints objects into the new format (unless Chromium)
+// TODO: This can be removed when Chromium supports the new format
+Peer.prototype._transformConstraints = function (constraints) {
+  var self = this
+
+  if (Object.keys(constraints).length === 0) {
+    return constraints
+  }
+
+  if ((constraints.mandatory || constraints.optional) && !self._isChromium) {
+    // convert to new format
+
+    // Merge mandatory and optional objects, prioritizing mandatory
+    var newConstraints = Object.assign({}, constraints.optional, constraints.mandatory)
+
+    // fix casing
+    if (newConstraints.OfferToReceiveVideo !== undefined) {
+      newConstraints.offerToReceiveVideo = newConstraints.OfferToReceiveVideo
+      delete newConstraints['OfferToReceiveVideo']
+    }
+
+    if (newConstraints.OfferToReceiveAudio !== undefined) {
+      newConstraints.offerToReceiveAudio = newConstraints.OfferToReceiveAudio
+      delete newConstraints['OfferToReceiveAudio']
+    }
+
+    return newConstraints
+  } else if (!constraints.mandatory && !constraints.optional && self._isChromium) {
+    // convert to old format
+
+    // fix casing
+    if (constraints.offerToReceiveVideo !== undefined) {
+      constraints.OfferToReceiveVideo = constraints.offerToReceiveVideo
+      delete constraints['offerToReceiveVideo']
+    }
+
+    if (constraints.offerToReceiveAudio !== undefined) {
+      constraints.OfferToReceiveAudio = constraints.offerToReceiveAudio
+      delete constraints['offerToReceiveAudio']
+    }
+
+    return {
+      mandatory: constraints // NOTE: All constraints are upgraded to mandatory
+    }
+  }
+
+  return constraints
+}
+
+function noop () {}
+
+}).call(this,require("buffer").Buffer)
+},{"buffer":10,"debug":13,"get-browser-rtc":16,"inherits":18,"randombytes":29,"readable-stream":42}],33:[function(require,module,exports){
+(function (process){
+'use strict';
+
+if (!process.version ||
+    process.version.indexOf('v0.') === 0 ||
+    process.version.indexOf('v1.') === 0 && process.version.indexOf('v1.8.') !== 0) {
+  module.exports = { nextTick: nextTick };
+} else {
+  module.exports = process
+}
+
+function nextTick(fn, arg1, arg2, arg3) {
+  if (typeof fn !== 'function') {
+    throw new TypeError('"callback" argument must be a function');
+  }
+  var len = arguments.length;
+  var args, i;
+  switch (len) {
+  case 0:
+  case 1:
+    return process.nextTick(fn);
+  case 2:
+    return process.nextTick(function afterTickOne() {
+      fn.call(null, arg1);
+    });
+  case 3:
+    return process.nextTick(function afterTickTwo() {
+      fn.call(null, arg1, arg2);
+    });
+  case 4:
+    return process.nextTick(function afterTickThree() {
+      fn.call(null, arg1, arg2, arg3);
+    });
+  default:
+    args = new Array(len - 1);
+    i = 0;
+    while (i < args.length) {
+      args[i++] = arguments[i];
+    }
+    return process.nextTick(function afterTick() {
+      fn.apply(null, args);
+    });
+  }
+}
+
+
+}).call(this,require('_process'))
+},{"_process":28}],34:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -5820,7 +6832,7 @@ function randomBytes (size, cb) {
 
 /*<replacement>*/
 
-var processNextTick = require('process-nextick-args');
+var processNextTick = require('process-nextick-args').nextTick;
 /*</replacement>*/
 
 /*<replacement>*/
@@ -5914,7 +6926,7 @@ function forEach(xs, f) {
     f(xs[i], i);
   }
 }
-},{"./_stream_readable":33,"./_stream_writable":35,"core-util-is":13,"inherits":19,"process-nextick-args":28}],32:[function(require,module,exports){
+},{"./_stream_readable":36,"./_stream_writable":38,"core-util-is":12,"inherits":18,"process-nextick-args":33}],35:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -5962,7 +6974,7 @@ function PassThrough(options) {
 PassThrough.prototype._transform = function (chunk, encoding, cb) {
   cb(null, chunk);
 };
-},{"./_stream_transform":34,"core-util-is":13,"inherits":19}],33:[function(require,module,exports){
+},{"./_stream_transform":37,"core-util-is":12,"inherits":18}],36:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -5989,7 +7001,7 @@ PassThrough.prototype._transform = function (chunk, encoding, cb) {
 
 /*<replacement>*/
 
-var processNextTick = require('process-nextick-args');
+var processNextTick = require('process-nextick-args').nextTick;
 /*</replacement>*/
 
 module.exports = Readable;
@@ -6016,9 +7028,8 @@ var EElistenerCount = function (emitter, type) {
 var Stream = require('./internal/streams/stream');
 /*</replacement>*/
 
-// TODO(bmeurer): Change this back to const once hole checks are
-// properly optimized away early in Ignition+TurboFan.
 /*<replacement>*/
+
 var Buffer = require('safe-buffer').Buffer;
 var OurUint8Array = global.Uint8Array || function () {};
 function _uint8ArrayToBuffer(chunk) {
@@ -6027,6 +7038,7 @@ function _uint8ArrayToBuffer(chunk) {
 function _isUint8Array(obj) {
   return Buffer.isBuffer(obj) || obj instanceof OurUint8Array;
 }
+
 /*</replacement>*/
 
 /*<replacement>*/
@@ -6055,15 +7067,13 @@ var kProxyEvents = ['error', 'close', 'destroy', 'pause', 'resume'];
 function prependListener(emitter, event, fn) {
   // Sadly this is not cacheable as some libraries bundle their own
   // event emitter implementation with them.
-  if (typeof emitter.prependListener === 'function') {
-    return emitter.prependListener(event, fn);
-  } else {
-    // This is a hack to make sure that our error handler is attached before any
-    // userland ones.  NEVER DO THIS. This is here only because this code needs
-    // to continue to work with older versions of Node.js that do not include
-    // the prependListener() method. The goal is to eventually remove this hack.
-    if (!emitter._events || !emitter._events[event]) emitter.on(event, fn);else if (isArray(emitter._events[event])) emitter._events[event].unshift(fn);else emitter._events[event] = [fn, emitter._events[event]];
-  }
+  if (typeof emitter.prependListener === 'function') return emitter.prependListener(event, fn);
+
+  // This is a hack to make sure that our error handler is attached before any
+  // userland ones.  NEVER DO THIS. This is here only because this code needs
+  // to continue to work with older versions of Node.js that do not include
+  // the prependListener() method. The goal is to eventually remove this hack.
+  if (!emitter._events || !emitter._events[event]) emitter.on(event, fn);else if (isArray(emitter._events[event])) emitter._events[event].unshift(fn);else emitter._events[event] = [fn, emitter._events[event]];
 }
 
 function ReadableState(options, stream) {
@@ -6071,17 +7081,26 @@ function ReadableState(options, stream) {
 
   options = options || {};
 
+  // Duplex streams are both readable and writable, but share
+  // the same options object.
+  // However, some cases require setting options to different
+  // values for the readable and the writable sides of the duplex stream.
+  // These options can be provided separately as readableXXX and writableXXX.
+  var isDuplex = stream instanceof Duplex;
+
   // object stream flag. Used to make read(n) ignore n and to
   // make all the buffer merging and length checks go away
   this.objectMode = !!options.objectMode;
 
-  if (stream instanceof Duplex) this.objectMode = this.objectMode || !!options.readableObjectMode;
+  if (isDuplex) this.objectMode = this.objectMode || !!options.readableObjectMode;
 
   // the point at which it stops calling _read() to fill the buffer
   // Note: 0 is a valid value, means "don't call _read preemptively ever"
   var hwm = options.highWaterMark;
+  var readableHwm = options.readableHighWaterMark;
   var defaultHwm = this.objectMode ? 16 : 16 * 1024;
-  this.highWaterMark = hwm || hwm === 0 ? hwm : defaultHwm;
+
+  if (hwm || hwm === 0) this.highWaterMark = hwm;else if (isDuplex && (readableHwm || readableHwm === 0)) this.highWaterMark = readableHwm;else this.highWaterMark = defaultHwm;
 
   // cast to ints.
   this.highWaterMark = Math.floor(this.highWaterMark);
@@ -6776,18 +7795,19 @@ function flow(stream) {
 // This is *not* part of the readable stream interface.
 // It is an ugly unfortunate mess of history.
 Readable.prototype.wrap = function (stream) {
+  var _this = this;
+
   var state = this._readableState;
   var paused = false;
 
-  var self = this;
   stream.on('end', function () {
     debug('wrapped end');
     if (state.decoder && !state.ended) {
       var chunk = state.decoder.end();
-      if (chunk && chunk.length) self.push(chunk);
+      if (chunk && chunk.length) _this.push(chunk);
     }
 
-    self.push(null);
+    _this.push(null);
   });
 
   stream.on('data', function (chunk) {
@@ -6797,7 +7817,7 @@ Readable.prototype.wrap = function (stream) {
     // don't skip over falsy values in objectMode
     if (state.objectMode && (chunk === null || chunk === undefined)) return;else if (!state.objectMode && (!chunk || !chunk.length)) return;
 
-    var ret = self.push(chunk);
+    var ret = _this.push(chunk);
     if (!ret) {
       paused = true;
       stream.pause();
@@ -6818,12 +7838,12 @@ Readable.prototype.wrap = function (stream) {
 
   // proxy certain important events.
   for (var n = 0; n < kProxyEvents.length; n++) {
-    stream.on(kProxyEvents[n], self.emit.bind(self, kProxyEvents[n]));
+    stream.on(kProxyEvents[n], this.emit.bind(this, kProxyEvents[n]));
   }
 
   // when we try to consume some more bytes, simply unpause the
   // underlying stream.
-  self._read = function (n) {
+  this._read = function (n) {
     debug('wrapped _read', n);
     if (paused) {
       paused = false;
@@ -6831,7 +7851,7 @@ Readable.prototype.wrap = function (stream) {
     }
   };
 
-  return self;
+  return this;
 };
 
 // exposed for testing purposes only.
@@ -6972,7 +7992,7 @@ function indexOf(xs, x) {
   return -1;
 }
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./_stream_duplex":31,"./internal/streams/BufferList":36,"./internal/streams/destroy":37,"./internal/streams/stream":38,"_process":29,"core-util-is":13,"events":16,"inherits":19,"isarray":21,"process-nextick-args":28,"safe-buffer":40,"string_decoder/":44,"util":8}],34:[function(require,module,exports){
+},{"./_stream_duplex":34,"./internal/streams/BufferList":39,"./internal/streams/destroy":40,"./internal/streams/stream":41,"_process":28,"core-util-is":12,"events":15,"inherits":18,"isarray":20,"process-nextick-args":33,"safe-buffer":31,"string_decoder/":43,"util":7}],37:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -7049,39 +8069,28 @@ util.inherits = require('inherits');
 
 util.inherits(Transform, Duplex);
 
-function TransformState(stream) {
-  this.afterTransform = function (er, data) {
-    return afterTransform(stream, er, data);
-  };
-
-  this.needTransform = false;
-  this.transforming = false;
-  this.writecb = null;
-  this.writechunk = null;
-  this.writeencoding = null;
-}
-
-function afterTransform(stream, er, data) {
-  var ts = stream._transformState;
+function afterTransform(er, data) {
+  var ts = this._transformState;
   ts.transforming = false;
 
   var cb = ts.writecb;
 
   if (!cb) {
-    return stream.emit('error', new Error('write callback called multiple times'));
+    return this.emit('error', new Error('write callback called multiple times'));
   }
 
   ts.writechunk = null;
   ts.writecb = null;
 
-  if (data !== null && data !== undefined) stream.push(data);
+  if (data != null) // single equals check for both `null` and `undefined`
+    this.push(data);
 
   cb(er);
 
-  var rs = stream._readableState;
+  var rs = this._readableState;
   rs.reading = false;
   if (rs.needReadable || rs.length < rs.highWaterMark) {
-    stream._read(rs.highWaterMark);
+    this._read(rs.highWaterMark);
   }
 }
 
@@ -7090,9 +8099,14 @@ function Transform(options) {
 
   Duplex.call(this, options);
 
-  this._transformState = new TransformState(this);
-
-  var stream = this;
+  this._transformState = {
+    afterTransform: afterTransform.bind(this),
+    needTransform: false,
+    transforming: false,
+    writecb: null,
+    writechunk: null,
+    writeencoding: null
+  };
 
   // start out asking for a readable event once data is transformed.
   this._readableState.needReadable = true;
@@ -7109,11 +8123,19 @@ function Transform(options) {
   }
 
   // When the writable side finishes, then flush out anything remaining.
-  this.once('prefinish', function () {
-    if (typeof this._flush === 'function') this._flush(function (er, data) {
-      done(stream, er, data);
-    });else done(stream);
-  });
+  this.on('prefinish', prefinish);
+}
+
+function prefinish() {
+  var _this = this;
+
+  if (typeof this._flush === 'function') {
+    this._flush(function (er, data) {
+      done(_this, er, data);
+    });
+  } else {
+    done(this, null, null);
+  }
 }
 
 Transform.prototype.push = function (chunk, encoding) {
@@ -7163,31 +8185,29 @@ Transform.prototype._read = function (n) {
 };
 
 Transform.prototype._destroy = function (err, cb) {
-  var _this = this;
+  var _this2 = this;
 
   Duplex.prototype._destroy.call(this, err, function (err2) {
     cb(err2);
-    _this.emit('close');
+    _this2.emit('close');
   });
 };
 
 function done(stream, er, data) {
   if (er) return stream.emit('error', er);
 
-  if (data !== null && data !== undefined) stream.push(data);
+  if (data != null) // single equals check for both `null` and `undefined`
+    stream.push(data);
 
   // if there's nothing in the write buffer, then that means
   // that nothing more will ever be provided
-  var ws = stream._writableState;
-  var ts = stream._transformState;
+  if (stream._writableState.length) throw new Error('Calling transform done when ws.length != 0');
 
-  if (ws.length) throw new Error('Calling transform done when ws.length != 0');
-
-  if (ts.transforming) throw new Error('Calling transform done when still transforming');
+  if (stream._transformState.transforming) throw new Error('Calling transform done when still transforming');
 
   return stream.push(null);
 }
-},{"./_stream_duplex":31,"core-util-is":13,"inherits":19}],35:[function(require,module,exports){
+},{"./_stream_duplex":34,"core-util-is":12,"inherits":18}],38:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -7218,7 +8238,7 @@ function done(stream, er, data) {
 
 /*<replacement>*/
 
-var processNextTick = require('process-nextick-args');
+var processNextTick = require('process-nextick-args').nextTick;
 /*</replacement>*/
 
 module.exports = Writable;
@@ -7270,6 +8290,7 @@ var Stream = require('./internal/streams/stream');
 /*</replacement>*/
 
 /*<replacement>*/
+
 var Buffer = require('safe-buffer').Buffer;
 var OurUint8Array = global.Uint8Array || function () {};
 function _uint8ArrayToBuffer(chunk) {
@@ -7278,6 +8299,7 @@ function _uint8ArrayToBuffer(chunk) {
 function _isUint8Array(obj) {
   return Buffer.isBuffer(obj) || obj instanceof OurUint8Array;
 }
+
 /*</replacement>*/
 
 var destroyImpl = require('./internal/streams/destroy');
@@ -7291,18 +8313,27 @@ function WritableState(options, stream) {
 
   options = options || {};
 
+  // Duplex streams are both readable and writable, but share
+  // the same options object.
+  // However, some cases require setting options to different
+  // values for the readable and the writable sides of the duplex stream.
+  // These options can be provided separately as readableXXX and writableXXX.
+  var isDuplex = stream instanceof Duplex;
+
   // object stream flag to indicate whether or not this stream
   // contains buffers or objects.
   this.objectMode = !!options.objectMode;
 
-  if (stream instanceof Duplex) this.objectMode = this.objectMode || !!options.writableObjectMode;
+  if (isDuplex) this.objectMode = this.objectMode || !!options.writableObjectMode;
 
   // the point at which write() starts returning false
   // Note: 0 is a valid value, means that we always return false if
   // the entire buffer is not flushed immediately on write()
   var hwm = options.highWaterMark;
+  var writableHwm = options.writableHighWaterMark;
   var defaultHwm = this.objectMode ? 16 : 16 * 1024;
-  this.highWaterMark = hwm || hwm === 0 ? hwm : defaultHwm;
+
+  if (hwm || hwm === 0) this.highWaterMark = hwm;else if (isDuplex && (writableHwm || writableHwm === 0)) this.highWaterMark = writableHwm;else this.highWaterMark = defaultHwm;
 
   // cast to ints.
   this.highWaterMark = Math.floor(this.highWaterMark);
@@ -7416,6 +8447,7 @@ if (typeof Symbol === 'function' && Symbol.hasInstance && typeof Function.protot
   Object.defineProperty(Writable, Symbol.hasInstance, {
     value: function (object) {
       if (realHasInstance.call(this, object)) return true;
+      if (this !== Writable) return false;
 
       return object && object._writableState instanceof WritableState;
     }
@@ -7493,7 +8525,7 @@ function validChunk(stream, state, chunk, cb) {
 Writable.prototype.write = function (chunk, encoding, cb) {
   var state = this._writableState;
   var ret = false;
-  var isBuf = _isUint8Array(chunk) && !state.objectMode;
+  var isBuf = !state.objectMode && _isUint8Array(chunk);
 
   if (isBuf && !Buffer.isBuffer(chunk)) {
     chunk = _uint8ArrayToBuffer(chunk);
@@ -7705,6 +8737,7 @@ function clearBuffer(stream, state) {
     } else {
       state.corkedRequestsFree = new CorkedRequest(state);
     }
+    state.bufferedRequestCount = 0;
   } else {
     // Slow case, write chunks one-by-one
     while (entry) {
@@ -7715,6 +8748,7 @@ function clearBuffer(stream, state) {
 
       doWrite(stream, state, false, len, chunk, encoding, cb);
       entry = entry.next;
+      state.bufferedRequestCount--;
       // if we didn't call the onwrite immediately, then
       // it means that we need to wait until it does.
       // also, that means that the chunk and cb are currently
@@ -7727,7 +8761,6 @@ function clearBuffer(stream, state) {
     if (entry === null) state.lastBufferedRequest = null;
   }
 
-  state.bufferedRequestCount = 0;
   state.bufferedRequest = entry;
   state.bufferProcessing = false;
 }
@@ -7854,15 +8887,13 @@ Writable.prototype._destroy = function (err, cb) {
   cb(err);
 };
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./_stream_duplex":31,"./internal/streams/destroy":37,"./internal/streams/stream":38,"_process":29,"core-util-is":13,"inherits":19,"process-nextick-args":28,"safe-buffer":40,"util-deprecate":45}],36:[function(require,module,exports){
+},{"./_stream_duplex":34,"./internal/streams/destroy":40,"./internal/streams/stream":41,"_process":28,"core-util-is":12,"inherits":18,"process-nextick-args":33,"safe-buffer":31,"util-deprecate":44}],39:[function(require,module,exports){
 'use strict';
-
-/*<replacement>*/
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
 var Buffer = require('safe-buffer').Buffer;
-/*</replacement>*/
+var util = require('util');
 
 function copyBuffer(src, target, offset) {
   src.copy(target, offset);
@@ -7929,12 +8960,19 @@ module.exports = function () {
 
   return BufferList;
 }();
-},{"safe-buffer":40}],37:[function(require,module,exports){
+
+if (util && util.inspect && util.inspect.custom) {
+  module.exports.prototype[util.inspect.custom] = function () {
+    var obj = util.inspect({ length: this.length });
+    return this.constructor.name + ' ' + obj;
+  };
+}
+},{"safe-buffer":31,"util":7}],40:[function(require,module,exports){
 'use strict';
 
 /*<replacement>*/
 
-var processNextTick = require('process-nextick-args');
+var processNextTick = require('process-nextick-args').nextTick;
 /*</replacement>*/
 
 // undocumented cb() API, needed for core, not for public API
@@ -7950,7 +8988,7 @@ function destroy(err, cb) {
     } else if (err && (!this._writableState || !this._writableState.errorEmitted)) {
       processNextTick(emitErrorNT, this, err);
     }
-    return;
+    return this;
   }
 
   // we set destroyed to true before firing error callbacks in order
@@ -7975,6 +9013,8 @@ function destroy(err, cb) {
       cb(err);
     }
   });
+
+  return this;
 }
 
 function undestroy() {
@@ -8002,10 +9042,10 @@ module.exports = {
   destroy: destroy,
   undestroy: undestroy
 };
-},{"process-nextick-args":28}],38:[function(require,module,exports){
+},{"process-nextick-args":33}],41:[function(require,module,exports){
 module.exports = require('events').EventEmitter;
 
-},{"events":16}],39:[function(require,module,exports){
+},{"events":15}],42:[function(require,module,exports){
 exports = module.exports = require('./lib/_stream_readable.js');
 exports.Stream = exports;
 exports.Readable = exports;
@@ -8014,1288 +9054,7 @@ exports.Duplex = require('./lib/_stream_duplex.js');
 exports.Transform = require('./lib/_stream_transform.js');
 exports.PassThrough = require('./lib/_stream_passthrough.js');
 
-},{"./lib/_stream_duplex.js":31,"./lib/_stream_passthrough.js":32,"./lib/_stream_readable.js":33,"./lib/_stream_transform.js":34,"./lib/_stream_writable.js":35}],40:[function(require,module,exports){
-/* eslint-disable node/no-deprecated-api */
-var buffer = require('buffer')
-var Buffer = buffer.Buffer
-
-// alternative to using Object.keys for old browsers
-function copyProps (src, dst) {
-  for (var key in src) {
-    dst[key] = src[key]
-  }
-}
-if (Buffer.from && Buffer.alloc && Buffer.allocUnsafe && Buffer.allocUnsafeSlow) {
-  module.exports = buffer
-} else {
-  // Copy properties from require('buffer')
-  copyProps(buffer, exports)
-  exports.Buffer = SafeBuffer
-}
-
-function SafeBuffer (arg, encodingOrOffset, length) {
-  return Buffer(arg, encodingOrOffset, length)
-}
-
-// Copy static methods from Buffer
-copyProps(Buffer, SafeBuffer)
-
-SafeBuffer.from = function (arg, encodingOrOffset, length) {
-  if (typeof arg === 'number') {
-    throw new TypeError('Argument must not be a number')
-  }
-  return Buffer(arg, encodingOrOffset, length)
-}
-
-SafeBuffer.alloc = function (size, fill, encoding) {
-  if (typeof size !== 'number') {
-    throw new TypeError('Argument must be a number')
-  }
-  var buf = Buffer(size)
-  if (fill !== undefined) {
-    if (typeof encoding === 'string') {
-      buf.fill(fill, encoding)
-    } else {
-      buf.fill(fill)
-    }
-  } else {
-    buf.fill(0)
-  }
-  return buf
-}
-
-SafeBuffer.allocUnsafe = function (size) {
-  if (typeof size !== 'number') {
-    throw new TypeError('Argument must be a number')
-  }
-  return Buffer(size)
-}
-
-SafeBuffer.allocUnsafeSlow = function (size) {
-  if (typeof size !== 'number') {
-    throw new TypeError('Argument must be a number')
-  }
-  return buffer.SlowBuffer(size)
-}
-
-},{"buffer":11}],41:[function(require,module,exports){
-(function (Buffer){
-module.exports = Peer
-
-var debug = require('debug')('simple-peer')
-var getBrowserRTC = require('get-browser-rtc')
-var inherits = require('inherits')
-var randombytes = require('randombytes')
-var stream = require('readable-stream')
-
-var MAX_BUFFERED_AMOUNT = 64 * 1024
-
-inherits(Peer, stream.Duplex)
-
-/**
- * WebRTC peer connection. Same API as node core `net.Socket`, plus a few extra methods.
- * Duplex stream.
- * @param {Object} opts
- */
-function Peer (opts) {
-  var self = this
-  if (!(self instanceof Peer)) return new Peer(opts)
-
-  self._id = randombytes(4).toString('hex').slice(0, 7)
-  self._debug('new peer %o', opts)
-
-  opts = Object.assign({
-    allowHalfOpen: false
-  }, opts)
-
-  stream.Duplex.call(self, opts)
-
-  self.channelName = opts.initiator
-    ? opts.channelName || randombytes(20).toString('hex')
-    : null
-
-  // Needed by _transformConstraints, so set this early
-  self._isChromium = typeof window !== 'undefined' && !!window.webkitRTCPeerConnection
-
-  self.initiator = opts.initiator || false
-  self.channelConfig = opts.channelConfig || Peer.channelConfig
-  self.config = opts.config || Peer.config
-  self.constraints = self._transformConstraints(opts.constraints || Peer.constraints)
-  self.offerConstraints = self._transformConstraints(opts.offerConstraints || {})
-  self.answerConstraints = self._transformConstraints(opts.answerConstraints || {})
-  self.reconnectTimer = opts.reconnectTimer || false
-  self.sdpTransform = opts.sdpTransform || function (sdp) { return sdp }
-  self.stream = opts.stream || false
-  self.trickle = opts.trickle !== undefined ? opts.trickle : true
-  self._earlyMessage = null
-
-  self.destroyed = false
-  self.connected = false
-
-  self.remoteAddress = undefined
-  self.remoteFamily = undefined
-  self.remotePort = undefined
-  self.localAddress = undefined
-  self.localPort = undefined
-
-  self._wrtc = (opts.wrtc && typeof opts.wrtc === 'object')
-    ? opts.wrtc
-    : getBrowserRTC()
-
-  if (!self._wrtc) {
-    if (typeof window === 'undefined') {
-      throw new Error('No WebRTC support: Specify `opts.wrtc` option in this environment')
-    } else {
-      throw new Error('No WebRTC support: Not a supported browser')
-    }
-  }
-
-  self._pcReady = false
-  self._channelReady = false
-  self._iceComplete = false // ice candidate trickle done (got null candidate)
-  self._channel = null
-  self._pendingCandidates = []
-  self._previousStreams = []
-
-  self._chunk = null
-  self._cb = null
-  self._interval = null
-  self._reconnectTimeout = null
-
-  self._pc = new (self._wrtc.RTCPeerConnection)(self.config, self.constraints)
-
-  // We prefer feature detection whenever possible, but sometimes that's not
-  // possible for certain implementations.
-  self._isWrtc = Array.isArray(self._pc.RTCIceConnectionStates)
-  self._isReactNativeWebrtc = typeof self._pc._peerConnectionId === 'number'
-
-  self._pc.oniceconnectionstatechange = function () {
-    self._onIceStateChange()
-  }
-  self._pc.onicegatheringstatechange = function () {
-    self._onIceStateChange()
-  }
-  self._pc.onsignalingstatechange = function () {
-    self._onSignalingStateChange()
-  }
-  self._pc.onicecandidate = function (event) {
-    self._onIceCandidate(event)
-  }
-
-  // Other spec events, unused by this implementation:
-  // - onconnectionstatechange
-  // - onicecandidateerror
-  // - onfingerprintfailure
-
-  if (self.initiator) {
-    var createdOffer = false
-    self._pc.onnegotiationneeded = function () {
-      if (!createdOffer) self._createOffer()
-      createdOffer = true
-    }
-
-    self._setupData({
-      channel: self._pc.createDataChannel(self.channelName, self.channelConfig)
-    })
-  } else {
-    self._pc.ondatachannel = function (event) {
-      self._setupData(event)
-    }
-  }
-
-  if ('addTrack' in self._pc) {
-    // WebRTC Spec, Firefox
-    if (self.stream) {
-      self.stream.getTracks().forEach(function (track) {
-        self._pc.addTrack(track, self.stream)
-      })
-    }
-    self._pc.ontrack = function (event) {
-      self._onTrack(event)
-    }
-  } else {
-    // Chrome, etc. This can be removed once all browsers support `ontrack`
-    if (self.stream) self._pc.addStream(self.stream)
-    self._pc.onaddstream = function (event) {
-      self._onAddStream(event)
-    }
-  }
-
-  // HACK: wrtc doesn't fire the 'negotionneeded' event
-  if (self.initiator && self._isWrtc) {
-    self._pc.onnegotiationneeded()
-  }
-
-  self._onFinishBound = function () {
-    self._onFinish()
-  }
-  self.once('finish', self._onFinishBound)
-}
-
-Peer.WEBRTC_SUPPORT = !!getBrowserRTC()
-
-/**
- * Expose config, constraints, and data channel config for overriding all Peer
- * instances. Otherwise, just set opts.config, opts.constraints, or opts.channelConfig
- * when constructing a Peer.
- */
-Peer.config = {
-  iceServers: [
-    {
-      urls: 'stun:stun.l.google.com:19302'
-    },
-    {
-      urls: 'stun:global.stun.twilio.com:3478?transport=udp'
-    }
-  ]
-}
-Peer.constraints = {}
-Peer.channelConfig = {}
-
-Object.defineProperty(Peer.prototype, 'bufferSize', {
-  get: function () {
-    var self = this
-    return (self._channel && self._channel.bufferedAmount) || 0
-  }
-})
-
-Peer.prototype.address = function () {
-  var self = this
-  return { port: self.localPort, family: 'IPv4', address: self.localAddress }
-}
-
-Peer.prototype.signal = function (data) {
-  var self = this
-  if (self.destroyed) throw new Error('cannot signal after peer is destroyed')
-  if (typeof data === 'string') {
-    try {
-      data = JSON.parse(data)
-    } catch (err) {
-      data = {}
-    }
-  }
-  self._debug('signal()')
-
-  if (data.candidate) {
-    if (self._pc.remoteDescription) self._addIceCandidate(data.candidate)
-    else self._pendingCandidates.push(data.candidate)
-  }
-  if (data.sdp) {
-    self._pc.setRemoteDescription(new (self._wrtc.RTCSessionDescription)(data), function () {
-      if (self.destroyed) return
-
-      self._pendingCandidates.forEach(function (candidate) {
-        self._addIceCandidate(candidate)
-      })
-      self._pendingCandidates = []
-
-      if (self._pc.remoteDescription.type === 'offer') self._createAnswer()
-    }, function (err) { self._destroy(err) })
-  }
-  if (!data.sdp && !data.candidate) {
-    self._destroy(new Error('signal() called with invalid signal data'))
-  }
-}
-
-Peer.prototype._addIceCandidate = function (candidate) {
-  var self = this
-  try {
-    self._pc.addIceCandidate(
-      new self._wrtc.RTCIceCandidate(candidate),
-      noop,
-      function (err) { self._destroy(err) }
-    )
-  } catch (err) {
-    self._destroy(new Error('error adding candidate: ' + err.message))
-  }
-}
-
-/**
- * Send text/binary data to the remote peer.
- * @param {TypedArrayView|ArrayBuffer|Buffer|string|Blob|Object} chunk
- */
-Peer.prototype.send = function (chunk) {
-  var self = this
-
-  // HACK: `wrtc` module crashes on Node.js Buffer, so convert to Uint8Array
-  // See: https://github.com/feross/simple-peer/issues/60
-  if (self._isWrtc && Buffer.isBuffer(chunk)) {
-    chunk = new Uint8Array(chunk)
-  }
-
-  self._channel.send(chunk)
-}
-
-Peer.prototype.destroy = function (onclose) {
-  var self = this
-  self._destroy(null, onclose)
-}
-
-Peer.prototype._destroy = function (err, onclose) {
-  var self = this
-  if (self.destroyed) return
-  if (onclose) self.once('close', onclose)
-
-  self._debug('destroy (error: %s)', err && (err.message || err))
-
-  self.readable = self.writable = false
-
-  if (!self._readableState.ended) self.push(null)
-  if (!self._writableState.finished) self.end()
-
-  self.destroyed = true
-  self.connected = false
-  self._pcReady = false
-  self._channelReady = false
-  self._previousStreams = null
-  self._earlyMessage = null
-
-  clearInterval(self._interval)
-  clearTimeout(self._reconnectTimeout)
-  self._interval = null
-  self._reconnectTimeout = null
-  self._chunk = null
-  self._cb = null
-
-  if (self._onFinishBound) self.removeListener('finish', self._onFinishBound)
-  self._onFinishBound = null
-
-  if (self._pc) {
-    try {
-      self._pc.close()
-    } catch (err) {}
-
-    self._pc.oniceconnectionstatechange = null
-    self._pc.onicegatheringstatechange = null
-    self._pc.onsignalingstatechange = null
-    self._pc.onicecandidate = null
-    if ('addTrack' in self._pc) {
-      self._pc.ontrack = null
-    } else {
-      self._pc.onaddstream = null
-    }
-    self._pc.onnegotiationneeded = null
-    self._pc.ondatachannel = null
-  }
-
-  if (self._channel) {
-    try {
-      self._channel.close()
-    } catch (err) {}
-
-    self._channel.onmessage = null
-    self._channel.onopen = null
-    self._channel.onclose = null
-    self._channel.onerror = null
-  }
-  self._pc = null
-  self._channel = null
-
-  if (err) self.emit('error', err)
-  self.emit('close')
-}
-
-Peer.prototype._setupData = function (event) {
-  var self = this
-  if (!event.channel) {
-    // In some situations `pc.createDataChannel()` returns `undefined` (in wrtc),
-    // which is invalid behavior. Handle it gracefully.
-    // See: https://github.com/feross/simple-peer/issues/163
-    return self._destroy(new Error('Data channel event is missing `channel` property'))
-  }
-
-  self._channel = event.channel
-  self._channel.binaryType = 'arraybuffer'
-
-  if (typeof self._channel.bufferedAmountLowThreshold === 'number') {
-    self._channel.bufferedAmountLowThreshold = MAX_BUFFERED_AMOUNT
-  }
-
-  self.channelName = self._channel.label
-
-  self._channel.onmessage = function (event) {
-    if (!self._channelReady) { // HACK: Workaround for Chrome not firing "open" between tabs
-      self._earlyMessage = event
-      self._onChannelOpen()
-    } else {
-      self._onChannelMessage(event)
-    }
-  }
-  self._channel.onbufferedamountlow = function () {
-    self._onChannelBufferedAmountLow()
-  }
-  self._channel.onopen = function () {
-    if (!self._channelReady) self._onChannelOpen()
-  }
-  self._channel.onclose = function () {
-    self._onChannelClose()
-  }
-  self._channel.onerror = function (err) {
-    self._destroy(err)
-  }
-}
-
-Peer.prototype._read = function () {}
-
-Peer.prototype._write = function (chunk, encoding, cb) {
-  var self = this
-  if (self.destroyed) return cb(new Error('cannot write after peer is destroyed'))
-
-  if (self.connected) {
-    try {
-      self.send(chunk)
-    } catch (err) {
-      return self._destroy(err)
-    }
-    if (self._channel.bufferedAmount > MAX_BUFFERED_AMOUNT) {
-      self._debug('start backpressure: bufferedAmount %d', self._channel.bufferedAmount)
-      self._cb = cb
-    } else {
-      cb(null)
-    }
-  } else {
-    self._debug('write before connect')
-    self._chunk = chunk
-    self._cb = cb
-  }
-}
-
-// When stream finishes writing, close socket. Half open connections are not
-// supported.
-Peer.prototype._onFinish = function () {
-  var self = this
-  if (self.destroyed) return
-
-  if (self.connected) {
-    destroySoon()
-  } else {
-    self.once('connect', destroySoon)
-  }
-
-  // Wait a bit before destroying so the socket flushes.
-  // TODO: is there a more reliable way to accomplish this?
-  function destroySoon () {
-    setTimeout(function () {
-      self._destroy()
-    }, 1000)
-  }
-}
-
-Peer.prototype._createOffer = function () {
-  var self = this
-  if (self.destroyed) return
-
-  self._pc.createOffer(function (offer) {
-    if (self.destroyed) return
-    offer.sdp = self.sdpTransform(offer.sdp)
-    self._pc.setLocalDescription(offer, onSuccess, onError)
-
-    function onSuccess () {
-      if (self.destroyed) return
-      if (self.trickle || self._iceComplete) sendOffer()
-      else self.once('_iceComplete', sendOffer) // wait for candidates
-    }
-
-    function onError (err) {
-      self._destroy(err)
-    }
-
-    function sendOffer () {
-      var signal = self._pc.localDescription || offer
-      self._debug('signal')
-      self.emit('signal', {
-        type: signal.type,
-        sdp: signal.sdp
-      })
-    }
-  }, function (err) { self._destroy(err) }, self.offerConstraints)
-}
-
-Peer.prototype._createAnswer = function () {
-  var self = this
-  if (self.destroyed) return
-
-  self._pc.createAnswer(function (answer) {
-    if (self.destroyed) return
-    answer.sdp = self.sdpTransform(answer.sdp)
-    self._pc.setLocalDescription(answer, onSuccess, onError)
-
-    function onSuccess () {
-      if (self.destroyed) return
-      if (self.trickle || self._iceComplete) sendAnswer()
-      else self.once('_iceComplete', sendAnswer)
-    }
-
-    function onError (err) {
-      self._destroy(err)
-    }
-
-    function sendAnswer () {
-      var signal = self._pc.localDescription || answer
-      self._debug('signal')
-      self.emit('signal', {
-        type: signal.type,
-        sdp: signal.sdp
-      })
-    }
-  }, function (err) { self._destroy(err) }, self.answerConstraints)
-}
-
-Peer.prototype._onIceStateChange = function () {
-  var self = this
-  if (self.destroyed) return
-  var iceConnectionState = self._pc.iceConnectionState
-  var iceGatheringState = self._pc.iceGatheringState
-
-  self._debug(
-    'iceStateChange (connection: %s) (gathering: %s)',
-    iceConnectionState,
-    iceGatheringState
-  )
-  self.emit('iceStateChange', iceConnectionState, iceGatheringState)
-
-  if (iceConnectionState === 'connected' || iceConnectionState === 'completed') {
-    clearTimeout(self._reconnectTimeout)
-    self._pcReady = true
-    self._maybeReady()
-  }
-  if (iceConnectionState === 'disconnected') {
-    if (self.reconnectTimer) {
-      // If user has set `opt.reconnectTimer`, allow time for ICE to attempt a reconnect
-      clearTimeout(self._reconnectTimeout)
-      self._reconnectTimeout = setTimeout(function () {
-        self._destroy()
-      }, self.reconnectTimer)
-    } else {
-      self._destroy()
-    }
-  }
-  if (iceConnectionState === 'failed') {
-    self._destroy(new Error('Ice connection failed.'))
-  }
-  if (iceConnectionState === 'closed') {
-    self._destroy()
-  }
-}
-
-Peer.prototype.getStats = function (cb) {
-  var self = this
-
-  // Promise-based getStats() (standard)
-  if (self._pc.getStats.length === 0) {
-    self._pc.getStats().then(function (res) {
-      var reports = []
-      res.forEach(function (report) {
-        reports.push(report)
-      })
-      cb(null, reports)
-    }, function (err) { cb(err) })
-
-  // Two-parameter callback-based getStats() (deprecated, former standard)
-  } else if (self._isReactNativeWebrtc) {
-    self._pc.getStats(null, function (res) {
-      var reports = []
-      res.forEach(function (report) {
-        reports.push(report)
-      })
-      cb(null, reports)
-    }, function (err) { cb(err) })
-
-  // Single-parameter callback-based getStats() (non-standard)
-  } else if (self._pc.getStats.length > 0) {
-    self._pc.getStats(function (res) {
-      // If we destroy connection in `connect` callback this code might happen to run when actual connection is already closed
-      if (self.destroyed) return
-
-      var reports = []
-      res.result().forEach(function (result) {
-        var report = {}
-        result.names().forEach(function (name) {
-          report[name] = result.stat(name)
-        })
-        report.id = result.id
-        report.type = result.type
-        report.timestamp = result.timestamp
-        reports.push(report)
-      })
-      cb(null, reports)
-    }, function (err) { cb(err) })
-
-  // Unknown browser, skip getStats() since it's anyone's guess which style of
-  // getStats() they implement.
-  } else {
-    cb(null, [])
-  }
-}
-
-Peer.prototype._maybeReady = function () {
-  var self = this
-  self._debug('maybeReady pc %s channel %s', self._pcReady, self._channelReady)
-  if (self.connected || self._connecting || !self._pcReady || !self._channelReady) return
-
-  self._connecting = true
-
-  // HACK: We can't rely on order here, for details see https://github.com/js-platform/node-webrtc/issues/339
-  function findCandidatePair () {
-    if (self.destroyed) return
-
-    self.getStats(function (err, items) {
-      if (self.destroyed) return
-
-      // Treat getStats error as non-fatal. It's not essential.
-      if (err) items = []
-
-      var remoteCandidates = {}
-      var localCandidates = {}
-      var candidatePairs = {}
-      var foundSelectedCandidatePair = false
-
-      items.forEach(function (item) {
-        // TODO: Once all browsers support the hyphenated stats report types, remove
-        // the non-hypenated ones
-        if (item.type === 'remotecandidate' || item.type === 'remote-candidate') {
-          remoteCandidates[item.id] = item
-        }
-        if (item.type === 'localcandidate' || item.type === 'local-candidate') {
-          localCandidates[item.id] = item
-        }
-        if (item.type === 'candidatepair' || item.type === 'candidate-pair') {
-          candidatePairs[item.id] = item
-        }
-      })
-
-      items.forEach(function (item) {
-        // Spec-compliant
-        if (item.type === 'transport') {
-          setSelectedCandidatePair(candidatePairs[item.selectedCandidatePairId])
-        }
-
-        // Old implementations
-        if (
-          (item.type === 'googCandidatePair' && item.googActiveConnection === 'true') ||
-          ((item.type === 'candidatepair' || item.type === 'candidate-pair') && item.selected)
-        ) {
-          setSelectedCandidatePair(item)
-        }
-      })
-
-      function setSelectedCandidatePair (selectedCandidatePair) {
-        foundSelectedCandidatePair = true
-
-        var local = localCandidates[selectedCandidatePair.localCandidateId]
-
-        if (local && local.ip) {
-          // Spec
-          self.localAddress = local.ip
-          self.localPort = Number(local.port)
-        } else if (local && local.ipAddress) {
-          // Firefox
-          self.localAddress = local.ipAddress
-          self.localPort = Number(local.portNumber)
-        } else if (typeof selectedCandidatePair.googLocalAddress === 'string') {
-          // TODO: remove this once Chrome 58 is released
-          local = selectedCandidatePair.googLocalAddress.split(':')
-          self.localAddress = local[0]
-          self.localPort = Number(local[1])
-        }
-
-        var remote = remoteCandidates[selectedCandidatePair.remoteCandidateId]
-
-        if (remote && remote.ip) {
-          // Spec
-          self.remoteAddress = remote.ip
-          self.remotePort = Number(remote.port)
-        } else if (remote && remote.ipAddress) {
-          // Firefox
-          self.remoteAddress = remote.ipAddress
-          self.remotePort = Number(remote.portNumber)
-        } else if (typeof selectedCandidatePair.googRemoteAddress === 'string') {
-          // TODO: remove this once Chrome 58 is released
-          remote = selectedCandidatePair.googRemoteAddress.split(':')
-          self.remoteAddress = remote[0]
-          self.remotePort = Number(remote[1])
-        }
-        self.remoteFamily = 'IPv4'
-
-        self._debug(
-          'connect local: %s:%s remote: %s:%s',
-          self.localAddress, self.localPort, self.remoteAddress, self.remotePort
-        )
-      }
-
-      if (!foundSelectedCandidatePair && items.length) {
-        setTimeout(findCandidatePair, 100)
-        return
-      } else {
-        self._connecting = false
-        self.connected = true
-      }
-
-      if (self._chunk) {
-        try {
-          self.send(self._chunk)
-        } catch (err) {
-          return self._destroy(err)
-        }
-        self._chunk = null
-        self._debug('sent chunk from "write before connect"')
-
-        var cb = self._cb
-        self._cb = null
-        cb(null)
-      }
-
-      // If `bufferedAmountLowThreshold` and 'onbufferedamountlow' are unsupported,
-      // fallback to using setInterval to implement backpressure.
-      if (typeof self._channel.bufferedAmountLowThreshold !== 'number') {
-        self._interval = setInterval(function () { self._onInterval() }, 150)
-        if (self._interval.unref) self._interval.unref()
-      }
-
-      self._debug('connect')
-      self.emit('connect')
-      if (self._earlyMessage) { // HACK: Workaround for Chrome not firing "open" between tabs
-        self._onChannelMessage(self._earlyMessage)
-        self._earlyMessage = null
-      }
-    })
-  }
-  findCandidatePair()
-}
-
-Peer.prototype._onInterval = function () {
-  if (!this._cb || !this._channel || this._channel.bufferedAmount > MAX_BUFFERED_AMOUNT) {
-    return
-  }
-  this._onChannelBufferedAmountLow()
-}
-
-Peer.prototype._onSignalingStateChange = function () {
-  var self = this
-  if (self.destroyed) return
-  self._debug('signalingStateChange %s', self._pc.signalingState)
-  self.emit('signalingStateChange', self._pc.signalingState)
-}
-
-Peer.prototype._onIceCandidate = function (event) {
-  var self = this
-  if (self.destroyed) return
-  if (event.candidate && self.trickle) {
-    self.emit('signal', {
-      candidate: {
-        candidate: event.candidate.candidate,
-        sdpMLineIndex: event.candidate.sdpMLineIndex,
-        sdpMid: event.candidate.sdpMid
-      }
-    })
-  } else if (!event.candidate) {
-    self._iceComplete = true
-    self.emit('_iceComplete')
-  }
-}
-
-Peer.prototype._onChannelMessage = function (event) {
-  var self = this
-  if (self.destroyed) return
-  var data = event.data
-  if (data instanceof ArrayBuffer) data = Buffer.from(data)
-  self.push(data)
-}
-
-Peer.prototype._onChannelBufferedAmountLow = function () {
-  var self = this
-  if (self.destroyed || !self._cb) return
-  self._debug('ending backpressure: bufferedAmount %d', self._channel.bufferedAmount)
-  var cb = self._cb
-  self._cb = null
-  cb(null)
-}
-
-Peer.prototype._onChannelOpen = function () {
-  var self = this
-  if (self.connected || self.destroyed) return
-  self._debug('on channel open')
-  self._channelReady = true
-  self._maybeReady()
-}
-
-Peer.prototype._onChannelClose = function () {
-  var self = this
-  if (self.destroyed) return
-  self._debug('on channel close')
-  self._destroy()
-}
-
-Peer.prototype._onAddStream = function (event) {
-  var self = this
-  if (self.destroyed) return
-  self._debug('on add stream')
-  self.emit('stream', event.stream)
-}
-
-Peer.prototype._onTrack = function (event) {
-  var self = this
-  if (self.destroyed) return
-  self._debug('on track')
-  var id = event.streams[0].id
-  if (self._previousStreams.indexOf(id) !== -1) return // Only fire one 'stream' event, even though there may be multiple tracks per stream
-  self._previousStreams.push(id)
-  self.emit('stream', event.streams[0])
-}
-
-Peer.prototype._debug = function () {
-  var self = this
-  var args = [].slice.call(arguments)
-  args[0] = '[' + self._id + '] ' + args[0]
-  debug.apply(null, args)
-}
-
-// Transform constraints objects into the new format (unless Chromium)
-// TODO: This can be removed when Chromium supports the new format
-Peer.prototype._transformConstraints = function (constraints) {
-  var self = this
-
-  if (Object.keys(constraints).length === 0) {
-    return constraints
-  }
-
-  if ((constraints.mandatory || constraints.optional) && !self._isChromium) {
-    // convert to new format
-
-    // Merge mandatory and optional objects, prioritizing mandatory
-    var newConstraints = Object.assign({}, constraints.optional, constraints.mandatory)
-
-    // fix casing
-    if (newConstraints.OfferToReceiveVideo !== undefined) {
-      newConstraints.offerToReceiveVideo = newConstraints.OfferToReceiveVideo
-      delete newConstraints['OfferToReceiveVideo']
-    }
-
-    if (newConstraints.OfferToReceiveAudio !== undefined) {
-      newConstraints.offerToReceiveAudio = newConstraints.OfferToReceiveAudio
-      delete newConstraints['OfferToReceiveAudio']
-    }
-
-    return newConstraints
-  } else if (!constraints.mandatory && !constraints.optional && self._isChromium) {
-    // convert to old format
-
-    // fix casing
-    if (constraints.offerToReceiveVideo !== undefined) {
-      constraints.OfferToReceiveVideo = constraints.offerToReceiveVideo
-      delete constraints['offerToReceiveVideo']
-    }
-
-    if (constraints.offerToReceiveAudio !== undefined) {
-      constraints.OfferToReceiveAudio = constraints.offerToReceiveAudio
-      delete constraints['offerToReceiveAudio']
-    }
-
-    return {
-      mandatory: constraints // NOTE: All constraints are upgraded to mandatory
-    }
-  }
-
-  return constraints
-}
-
-function noop () {}
-
-}).call(this,require("buffer").Buffer)
-},{"buffer":11,"debug":42,"get-browser-rtc":17,"inherits":19,"randombytes":30,"readable-stream":39}],42:[function(require,module,exports){
-(function (process){
-/**
- * This is the web browser implementation of `debug()`.
- *
- * Expose `debug()` as the module.
- */
-
-exports = module.exports = require('./debug');
-exports.log = log;
-exports.formatArgs = formatArgs;
-exports.save = save;
-exports.load = load;
-exports.useColors = useColors;
-exports.storage = 'undefined' != typeof chrome
-               && 'undefined' != typeof chrome.storage
-                  ? chrome.storage.local
-                  : localstorage();
-
-/**
- * Colors.
- */
-
-exports.colors = [
-  'lightseagreen',
-  'forestgreen',
-  'goldenrod',
-  'dodgerblue',
-  'darkorchid',
-  'crimson'
-];
-
-/**
- * Currently only WebKit-based Web Inspectors, Firefox >= v31,
- * and the Firebug extension (any Firefox version) are known
- * to support "%c" CSS customizations.
- *
- * TODO: add a `localStorage` variable to explicitly enable/disable colors
- */
-
-function useColors() {
-  // NB: In an Electron preload script, document will be defined but not fully
-  // initialized. Since we know we're in Chrome, we'll just detect this case
-  // explicitly
-  if (typeof window !== 'undefined' && window.process && window.process.type === 'renderer') {
-    return true;
-  }
-
-  // is webkit? http://stackoverflow.com/a/16459606/376773
-  // document is undefined in react-native: https://github.com/facebook/react-native/pull/1632
-  return (typeof document !== 'undefined' && document.documentElement && document.documentElement.style && document.documentElement.style.WebkitAppearance) ||
-    // is firebug? http://stackoverflow.com/a/398120/376773
-    (typeof window !== 'undefined' && window.console && (window.console.firebug || (window.console.exception && window.console.table))) ||
-    // is firefox >= v31?
-    // https://developer.mozilla.org/en-US/docs/Tools/Web_Console#Styling_messages
-    (typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.toLowerCase().match(/firefox\/(\d+)/) && parseInt(RegExp.$1, 10) >= 31) ||
-    // double check webkit in userAgent just in case we are in a worker
-    (typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.toLowerCase().match(/applewebkit\/(\d+)/));
-}
-
-/**
- * Map %j to `JSON.stringify()`, since no Web Inspectors do that by default.
- */
-
-exports.formatters.j = function(v) {
-  try {
-    return JSON.stringify(v);
-  } catch (err) {
-    return '[UnexpectedJSONParseError]: ' + err.message;
-  }
-};
-
-
-/**
- * Colorize log arguments if enabled.
- *
- * @api public
- */
-
-function formatArgs(args) {
-  var useColors = this.useColors;
-
-  args[0] = (useColors ? '%c' : '')
-    + this.namespace
-    + (useColors ? ' %c' : ' ')
-    + args[0]
-    + (useColors ? '%c ' : ' ')
-    + '+' + exports.humanize(this.diff);
-
-  if (!useColors) return;
-
-  var c = 'color: ' + this.color;
-  args.splice(1, 0, c, 'color: inherit')
-
-  // the final "%c" is somewhat tricky, because there could be other
-  // arguments passed either before or after the %c, so we need to
-  // figure out the correct index to insert the CSS into
-  var index = 0;
-  var lastC = 0;
-  args[0].replace(/%[a-zA-Z%]/g, function(match) {
-    if ('%%' === match) return;
-    index++;
-    if ('%c' === match) {
-      // we only are interested in the *last* %c
-      // (the user may have provided their own)
-      lastC = index;
-    }
-  });
-
-  args.splice(lastC, 0, c);
-}
-
-/**
- * Invokes `console.log()` when available.
- * No-op when `console.log` is not a "function".
- *
- * @api public
- */
-
-function log() {
-  // this hackery is required for IE8/9, where
-  // the `console.log` function doesn't have 'apply'
-  return 'object' === typeof console
-    && console.log
-    && Function.prototype.apply.call(console.log, console, arguments);
-}
-
-/**
- * Save `namespaces`.
- *
- * @param {String} namespaces
- * @api private
- */
-
-function save(namespaces) {
-  try {
-    if (null == namespaces) {
-      exports.storage.removeItem('debug');
-    } else {
-      exports.storage.debug = namespaces;
-    }
-  } catch(e) {}
-}
-
-/**
- * Load `namespaces`.
- *
- * @return {String} returns the previously persisted debug modes
- * @api private
- */
-
-function load() {
-  var r;
-  try {
-    r = exports.storage.debug;
-  } catch(e) {}
-
-  // If debug isn't set in LS, and we're in Electron, try to load $DEBUG
-  if (!r && typeof process !== 'undefined' && 'env' in process) {
-    r = process.env.DEBUG;
-  }
-
-  return r;
-}
-
-/**
- * Enable namespaces listed in `localStorage.debug` initially.
- */
-
-exports.enable(load());
-
-/**
- * Localstorage attempts to return the localstorage.
- *
- * This is necessary because safari throws
- * when a user disables cookies/localstorage
- * and you attempt to access it.
- *
- * @return {LocalStorage}
- * @api private
- */
-
-function localstorage() {
-  try {
-    return window.localStorage;
-  } catch (e) {}
-}
-
-}).call(this,require('_process'))
-},{"./debug":43,"_process":29}],43:[function(require,module,exports){
-
-/**
- * This is the common logic for both the Node.js and web browser
- * implementations of `debug()`.
- *
- * Expose `debug()` as the module.
- */
-
-exports = module.exports = createDebug.debug = createDebug['default'] = createDebug;
-exports.coerce = coerce;
-exports.disable = disable;
-exports.enable = enable;
-exports.enabled = enabled;
-exports.humanize = require('ms');
-
-/**
- * The currently active debug mode names, and names to skip.
- */
-
-exports.names = [];
-exports.skips = [];
-
-/**
- * Map of special "%n" handling functions, for the debug "format" argument.
- *
- * Valid key names are a single, lower or upper-case letter, i.e. "n" and "N".
- */
-
-exports.formatters = {};
-
-/**
- * Previous log timestamp.
- */
-
-var prevTime;
-
-/**
- * Select a color.
- * @param {String} namespace
- * @return {Number}
- * @api private
- */
-
-function selectColor(namespace) {
-  var hash = 0, i;
-
-  for (i in namespace) {
-    hash  = ((hash << 5) - hash) + namespace.charCodeAt(i);
-    hash |= 0; // Convert to 32bit integer
-  }
-
-  return exports.colors[Math.abs(hash) % exports.colors.length];
-}
-
-/**
- * Create a debugger with the given `namespace`.
- *
- * @param {String} namespace
- * @return {Function}
- * @api public
- */
-
-function createDebug(namespace) {
-
-  function debug() {
-    // disabled?
-    if (!debug.enabled) return;
-
-    var self = debug;
-
-    // set `diff` timestamp
-    var curr = +new Date();
-    var ms = curr - (prevTime || curr);
-    self.diff = ms;
-    self.prev = prevTime;
-    self.curr = curr;
-    prevTime = curr;
-
-    // turn the `arguments` into a proper Array
-    var args = new Array(arguments.length);
-    for (var i = 0; i < args.length; i++) {
-      args[i] = arguments[i];
-    }
-
-    args[0] = exports.coerce(args[0]);
-
-    if ('string' !== typeof args[0]) {
-      // anything else let's inspect with %O
-      args.unshift('%O');
-    }
-
-    // apply any `formatters` transformations
-    var index = 0;
-    args[0] = args[0].replace(/%([a-zA-Z%])/g, function(match, format) {
-      // if we encounter an escaped % then don't increase the array index
-      if (match === '%%') return match;
-      index++;
-      var formatter = exports.formatters[format];
-      if ('function' === typeof formatter) {
-        var val = args[index];
-        match = formatter.call(self, val);
-
-        // now we need to remove `args[index]` since it's inlined in the `format`
-        args.splice(index, 1);
-        index--;
-      }
-      return match;
-    });
-
-    // apply env-specific formatting (colors, etc.)
-    exports.formatArgs.call(self, args);
-
-    var logFn = debug.log || exports.log || console.log.bind(console);
-    logFn.apply(self, args);
-  }
-
-  debug.namespace = namespace;
-  debug.enabled = exports.enabled(namespace);
-  debug.useColors = exports.useColors();
-  debug.color = selectColor(namespace);
-
-  // env-specific initialization logic for debug instances
-  if ('function' === typeof exports.init) {
-    exports.init(debug);
-  }
-
-  return debug;
-}
-
-/**
- * Enables a debug mode by namespaces. This can include modes
- * separated by a colon and wildcards.
- *
- * @param {String} namespaces
- * @api public
- */
-
-function enable(namespaces) {
-  exports.save(namespaces);
-
-  exports.names = [];
-  exports.skips = [];
-
-  var split = (typeof namespaces === 'string' ? namespaces : '').split(/[\s,]+/);
-  var len = split.length;
-
-  for (var i = 0; i < len; i++) {
-    if (!split[i]) continue; // ignore empty strings
-    namespaces = split[i].replace(/\*/g, '.*?');
-    if (namespaces[0] === '-') {
-      exports.skips.push(new RegExp('^' + namespaces.substr(1) + '$'));
-    } else {
-      exports.names.push(new RegExp('^' + namespaces + '$'));
-    }
-  }
-}
-
-/**
- * Disable debug output.
- *
- * @api public
- */
-
-function disable() {
-  exports.enable('');
-}
-
-/**
- * Returns true if the given mode name is enabled, false otherwise.
- *
- * @param {String} name
- * @return {Boolean}
- * @api public
- */
-
-function enabled(name) {
-  var i, len;
-  for (i = 0, len = exports.skips.length; i < len; i++) {
-    if (exports.skips[i].test(name)) {
-      return false;
-    }
-  }
-  for (i = 0, len = exports.names.length; i < len; i++) {
-    if (exports.names[i].test(name)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Coerce `val`.
- *
- * @param {Mixed} val
- * @return {Mixed}
- * @api private
- */
-
-function coerce(val) {
-  if (val instanceof Error) return val.stack || val.message;
-  return val;
-}
-
-},{"ms":27}],44:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":34,"./lib/_stream_passthrough.js":35,"./lib/_stream_readable.js":36,"./lib/_stream_transform.js":37,"./lib/_stream_writable.js":38}],43:[function(require,module,exports){
 'use strict';
 
 var Buffer = require('safe-buffer').Buffer;
@@ -9568,7 +9327,7 @@ function simpleWrite(buf) {
 function simpleEnd(buf) {
   return buf && buf.length ? this.write(buf) : '';
 }
-},{"safe-buffer":40}],45:[function(require,module,exports){
+},{"safe-buffer":31}],44:[function(require,module,exports){
 (function (global){
 
 /**
@@ -9639,16 +9398,16 @@ function config (name) {
 }
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],46:[function(require,module,exports){
-arguments[4][19][0].apply(exports,arguments)
-},{"dup":19}],47:[function(require,module,exports){
+},{}],45:[function(require,module,exports){
+arguments[4][18][0].apply(exports,arguments)
+},{"dup":18}],46:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],48:[function(require,module,exports){
+},{}],47:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -10238,14 +9997,13 @@ function hasOwnProperty(obj, prop) {
 }
 
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":47,"_process":29,"inherits":46}],49:[function(require,module,exports){
+},{"./support/isBuffer":46,"_process":28,"inherits":45}],48:[function(require,module,exports){
 (function (Buffer){
 // Generated by LiveScript 1.5.0
 /**
- * @package   WebTorrent DHT
- * @author    Nazar Mokrynskyi <nazar@mokrynskyi.com>
- * @copyright Copyright (c) 2017, Nazar Mokrynskyi
- * @license   MIT License, see license.txt
+ * @package WebTorrent DHT
+ * @author  Nazar Mokrynskyi <nazar@mokrynskyi.com>
+ * @license 0BSD
  */
 (function(){
   var debug, inherits, isIP, kRpcSocket, webrtcSocket, noop, x$, slice$ = [].slice;
@@ -10455,7 +10213,7 @@ function hasOwnProperty(obj, prop) {
         function fn$(resolve){
           var x$, peer_connection;
           x$ = peer_connection = this$.socket._prepare_connection(true);
-          x$.on('signal', function(signal){
+          x$.once('signal', function(signal){
             signal.id = this$.id;
             signal.extensions = this$._extensions;
             resolve({
@@ -10463,7 +10221,7 @@ function hasOwnProperty(obj, prop) {
               signal: signal
             });
           });
-          x$.on('error', function(error){
+          x$.once('error', function(error){
             resolve(null);
           });
         }
@@ -10490,7 +10248,8 @@ function hasOwnProperty(obj, prop) {
           }
           args = res$;
           if (!(!error && Array.isArray(response.r.signals))) {
-            return callback.apply(null, [error, response].concat(slice$.call(args)));
+            callback.apply(null, [error, response].concat(slice$.call(args)));
+            return;
           }
           /**
            * Use signal data from response to establish connections to target nodes and re-pack nodes using address and port from
@@ -10515,11 +10274,18 @@ function hasOwnProperty(obj, prop) {
                   if (peer_connection) {
                     peer_connections[i].destroy();
                     return encode_info(peer_connection.remoteAddress, peer_connection.remotePort);
+                  } else if (!response.r.nodes && !response.r.values) {
+                    return null;
                   } else {
                     return new Promise(function(resolve){
-                      var x$, peer_connection;
-                      x$ = peer_connection = peer_connections[i];
-                      x$.on('connect', function(){
+                      var peer_connection, x$;
+                      peer_connection = peer_connections[i];
+                      if (peer_connection.destroyed) {
+                        resolve(null);
+                        return;
+                      }
+                      x$ = peer_connection;
+                      x$.once('connect', function(){
                         this$.socket._add_id_mapping(signal_id_hex, peer_connection);
                         if (response.r.nodes) {
                           resolve(encode_node(response.r.nodes.slice(i * this$._info_length, i * this$._info_length + this$._id_length), peer_connection.remoteAddress, peer_connection.remotePort));
@@ -10527,7 +10293,7 @@ function hasOwnProperty(obj, prop) {
                           resolve(encode_info(peer_connection.remoteAddress, peer_connection.remotePort));
                         }
                       });
-                      x$.on('error', function(){
+                      x$.once('close', function(){
                         resolve(null);
                       });
                       x$.signal(signal);
@@ -10555,7 +10321,7 @@ function hasOwnProperty(obj, prop) {
     }
   };
   x$.emit = function(event){
-    var args, res$, i$, to$, message, peer, ref$, ref1$, ref2$, signal, signal_id_hex, x$, peer_connection, ref3$, this$ = this;
+    var args, res$, i$, to$, message, peer, ref$, ref1$, ref2$, signal, signal_id_hex, done, x$, peer_connection, ref3$, this$ = this;
     res$ = [];
     for (i$ = 1, to$ = arguments.length; i$ < to$; ++i$) {
       res$.push(arguments[i$]);
@@ -10580,11 +10346,16 @@ function hasOwnProperty(obj, prop) {
               }
             });
           } else {
+            done = false;
             x$ = peer_connection = this.socket._prepare_connection(false);
-            x$.on('connect', function(){
+            x$.once('connect', function(){
               this$.socket._add_id_mapping(signal_id_hex, peer_connection);
             });
-            x$.on('signal', function(signal){
+            x$.once('signal', function(signal){
+              if (done) {
+                return;
+              }
+              done = true;
               signal.id = this$.id;
               signal.extensions = this$._extensions;
               this$.response(peer, message, {
@@ -10592,13 +10363,17 @@ function hasOwnProperty(obj, prop) {
                 signal: signal
               });
             });
-            x$.on('error', function(error){
+            x$.once('close', function(error){
+              if (done) {
+                return;
+              }
+              done = true;
               this$.error(peer, message, [201, error]);
             });
             x$.signal(signal);
           }
         }
-        break;
+        return;
       }
       break;
     case 'response':
@@ -10606,21 +10381,19 @@ function hasOwnProperty(obj, prop) {
       if ((ref3$ = message.r) != null && ref3$.id) {
         this.socket._add_id_mapping(message.r.id.toString('hex'), peer);
       }
-      break;
     }
     return kRpcSocket.prototype.emit.apply(this, arguments);
   };
 }).call(this);
 
 }).call(this,require("buffer").Buffer)
-},{"./webrtc-socket":51,"buffer":11,"debug":14,"inherits":19,"isipaddress":22,"k-rpc-socket":24}],50:[function(require,module,exports){
+},{"./webrtc-socket":50,"buffer":10,"debug":13,"inherits":18,"isipaddress":21,"k-rpc-socket":23}],49:[function(require,module,exports){
 (function (Buffer){
 // Generated by LiveScript 1.5.0
 /**
- * @package   WebTorrent DHT
- * @author    Nazar Mokrynskyi <nazar@mokrynskyi.com>
- * @copyright Copyright (c) 2017, Nazar Mokrynskyi
- * @license   MIT License, see license.txt
+ * @package WebTorrent DHT
+ * @author  Nazar Mokrynskyi <nazar@mokrynskyi.com>
+ * @license 0BSD
  */
 (function(){
   var inherits, kRpc, kRpcSocketWebrtc, randombytes, K, noop, BOOTSTRAP_NODES;
@@ -10667,14 +10440,13 @@ function hasOwnProperty(obj, prop) {
 }).call(this);
 
 }).call(this,require("buffer").Buffer)
-},{"./k-rpc-socket-webrtc":49,"buffer":11,"inherits":19,"k-rpc":25,"randombytes":30}],51:[function(require,module,exports){
+},{"./k-rpc-socket-webrtc":48,"buffer":10,"inherits":18,"k-rpc":24,"randombytes":29}],50:[function(require,module,exports){
 (function (Buffer){
 // Generated by LiveScript 1.5.0
 /**
- * @package   WebTorrent DHT
- * @author    Nazar Mokrynskyi <nazar@mokrynskyi.com>
- * @copyright Copyright (c) 2017, Nazar Mokrynskyi
- * @license   MIT License, see license.txt
+ * @package WebTorrent DHT
+ * @author  Nazar Mokrynskyi <nazar@mokrynskyi.com>
+ * @license 0BSD
  */
 (function(){
   var bencode, debug, EventEmitter, inherits, simplePeer, wrtc, ws, PEER_CONNECTION_TIMEOUT, SIMPLE_PEER_OPTS, x$, slice$ = [].slice;
@@ -10731,7 +10503,7 @@ function hasOwnProperty(obj, prop) {
     x$ = this.ws_server = new ws.Server({
       port: port
     });
-    x$.on('listening', function(){
+    x$.once('listening', function(){
       debug('listening for WebSocket connections on %s:%d', address, port);
       if (!this$._ws_address) {
         this$._ws_address = {
@@ -10751,19 +10523,19 @@ function hasOwnProperty(obj, prop) {
       var x$, peer_connection, y$, timeout;
       debug('accepted WS connection');
       x$ = peer_connection = this$._prepare_connection(true);
-      x$.on('signal', function(signal){
+      x$.once('signal', function(signal){
         debug('got signal for WS (server): %s', signal);
         signal.extensions = this$._extensions;
         signal = bencode.encode(signal);
         ws_connection.send(signal);
       });
-      x$.on('connect', function(){
+      x$.once('connect', function(){
         if (ws_connection.readyState === 1) {
           ws_connection.close();
         }
       });
       y$ = ws_connection;
-      y$.on('message', function(data){
+      y$.once('message', function(data){
         var signal, e;
         try {
           signal = bencode.decode(data);
@@ -10775,7 +10547,7 @@ function hasOwnProperty(obj, prop) {
           ws_connection.close();
         }
       });
-      y$.on('close', function(){
+      y$.once('close', function(){
         clearTimeout(timeout);
       });
       timeout = setTimeout(function(){
@@ -10825,13 +10597,13 @@ function hasOwnProperty(obj, prop) {
             var x$, peer_connection, timeout;
             debug('opened WS connection');
             x$ = peer_connection = this$._prepare_connection(false);
-            x$.on('signal', function(signal){
+            x$.once('signal', function(signal){
               debug('got signal for WS (client): %s', signal);
               signal.extensions = this$._extensions;
               signal = bencode.encode(signal);
               ws_connection.send(signal);
             });
-            x$.on('connect', function(){
+            x$.once('connect', function(){
               var remote_peer_info;
               if (ws_connection.readyState === 1) {
                 ws_connection.close();
@@ -10848,7 +10620,7 @@ function hasOwnProperty(obj, prop) {
               this$.send(buffer, offset, length, port, address, callback);
               resolve(remote_peer_info);
             });
-            x$.on('close', function(){
+            x$.once('close', function(){
               clearTimeout(timeout);
             });
             ws_connection.onmessage = function(arg$){
@@ -10893,7 +10665,7 @@ function hasOwnProperty(obj, prop) {
     x$ = peer_connection = this._simple_peer_constructor(Object.assign({}, this._simple_peer_opts, {
       initiator: initiator
     }));
-    x$.on('connect', function(){
+    x$.once('connect', function(){
       var address, data;
       debug('peer connected: %s:%d', peer_connection.remoteAddress, peer_connection.remotePort);
       this$._register_connection(peer_connection);
@@ -10907,7 +10679,7 @@ function hasOwnProperty(obj, prop) {
         });
         this$.send(Buffer.from(data), 0, data.length, peer_connection.remotePort, peer_connection.remoteAddress, function(){});
       }
-      peer_connection.on('close', function(){
+      peer_connection.once('close', function(){
         debug('peer disconnected: %s:%d', peer_connection.remoteAddress, peer_connection.remotePort);
       });
     });
@@ -10930,17 +10702,26 @@ function hasOwnProperty(obj, prop) {
         } catch (e$) {}
       }
       if (Buffer.isBuffer(data)) {
-        this$.emit('message', data, {
-          address: peer_connection.remoteAddress,
-          port: peer_connection.remotePort
-        });
+        if (peer_connection.connected) {
+          this$.emit('message', data, {
+            address: peer_connection.remoteAddress,
+            port: peer_connection.remotePort
+          });
+        } else {
+          peer_connection.once('connected', function(){
+            this$.emit('message', data, {
+              address: peer_connection.remoteAddress,
+              port: peer_connection.remotePort
+            });
+          });
+        }
       }
     });
     x$.on('error', function(){
       debug('peer error: %o', arguments);
       this$.emit.apply(this$, ['error'].concat(slice$.call(arguments)));
     });
-    x$.on('close', function(){
+    x$.once('close', function(){
       clearTimeout(timeout);
       this$._all_peer_connections['delete'](peer_connection);
     });
@@ -10988,7 +10769,7 @@ function hasOwnProperty(obj, prop) {
     }
     this._connections_id_mapping[id] = peer_connection;
     peer_connection.id = id;
-    peer_connection.on('close', function(){
+    peer_connection.once('close', function(){
       this$._del_id_mapping(id);
     });
     this.emit('node_connected', id);
@@ -11062,7 +10843,7 @@ function hasOwnProperty(obj, prop) {
     ip = peer_connection.remoteAddress;
     port = peer_connection.remotePort;
     this._peer_connections[ip + ":" + port] = peer_connection;
-    peer_connection.on('close', function(){
+    peer_connection.once('close', function(){
       delete this$._peer_connections[ip + ":" + port];
     });
   };
@@ -11070,7 +10851,7 @@ function hasOwnProperty(obj, prop) {
     var peer_connection, this$ = this;
     peer_connection = this._peer_connections[webrtc_host + ":" + webrtc_port];
     this._ws_connections_aliases[websocket_host + ":" + websocket_port] = peer_connection;
-    peer_connection.on('close', function(){
+    peer_connection.once('close', function(){
       delete this$._ws_connections_aliases[websocket_host + ":" + websocket_port];
     });
     this.emit('websocket_peer_connection_alias', websocket_host, websocket_port, peer_connection);
@@ -11078,14 +10859,13 @@ function hasOwnProperty(obj, prop) {
 }).call(this);
 
 }).call(this,require("buffer").Buffer)
-},{"bencode":3,"buffer":11,"debug":14,"events":16,"inherits":19,"simple-peer":41,"wrtc":53,"ws":8}],52:[function(require,module,exports){
+},{"bencode":3,"buffer":10,"debug":13,"events":15,"inherits":18,"simple-peer":32,"wrtc":52,"ws":7}],51:[function(require,module,exports){
 (function (Buffer){
 // Generated by LiveScript 1.5.0
 /**
- * @package   WebTorrent DHT
- * @author    Nazar Mokrynskyi <nazar@mokrynskyi.com>
- * @copyright Copyright (c) 2017, Nazar Mokrynskyi
- * @license   MIT License, see license.txt
+ * @package WebTorrent DHT
+ * @author  Nazar Mokrynskyi <nazar@mokrynskyi.com>
+ * @license 0BSD
  */
 (function(){
   var bittorrentDht, inherits, kRpcWebrtc, noop, x$;
@@ -11128,16 +10908,14 @@ function hasOwnProperty(obj, prop) {
 }).call(this);
 
 }).call(this,require("buffer").Buffer)
-},{"./k-rpc-webrtc":50,"bittorrent-dht":5,"buffer":11,"inherits":19}],53:[function(require,module,exports){
-var RTCIceCandidate       = window.mozRTCIceCandidate       || window.webkitRTCIceCandidate       || window.RTCIceCandidate;
-var RTCPeerConnection     = window.mozRTCPeerConnection     || window.webkitRTCPeerConnection     || window.RTCPeerConnection;
-var RTCSessionDescription = window.mozRTCSessionDescription || window.webkitRTCSessionDescription || window.RTCSessionDescription;
+},{"./k-rpc-webrtc":49,"bittorrent-dht":5,"buffer":10,"inherits":18}],52:[function(require,module,exports){
+'use strict';
 
-exports.RTCIceCandidate       = RTCIceCandidate;
-exports.RTCPeerConnection     = RTCPeerConnection;
-exports.RTCSessionDescription = RTCSessionDescription;
+exports.RTCIceCandidate = window.mozRTCIceCandidate || window.webkitRTCIceCandidate || window.RTCIceCandidate;
+exports.RTCPeerConnection = window.mozRTCPeerConnection || window.webkitRTCPeerConnection || window.RTCPeerConnection;
+exports.RTCSessionDescription = window.mozRTCSessionDescription || window.webkitRTCSessionDescription || window.RTCSessionDescription;
 
-},{}],54:[function(require,module,exports){
+},{}],53:[function(require,module,exports){
 (function (Buffer){
 // Generated by LiveScript 1.5.0
 /**
@@ -11161,5 +10939,5 @@ exports.RTCSessionDescription = RTCSessionDescription;
 }).call(this);
 
 }).call(this,require("buffer").Buffer)
-},{"bencode":3,"buffer":11,"simple-peer":41,"webtorrent-dht":52,"webtorrent-dht/webrtc-socket":51}]},{},[54])(54)
+},{"bencode":3,"buffer":10,"simple-peer":32,"webtorrent-dht":51,"webtorrent-dht/webrtc-socket":50}]},{},[53])(53)
 });
