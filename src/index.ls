@@ -13,4 +13,3 @@ module.exports	=
 	'simple-peer'		: simple-peer
 	'webrtc-socket'		: webrtc-socket
 	'webtorrent-dht'	: webtorrent-dht
-	'Buffer'			: Buffer
