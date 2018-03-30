@@ -5,14 +5,12 @@
  * @license 0BSD
  */
 (function(){
-  var bencode, simplePeer, webrtcSocket, webtorrentDht;
+  var bencode, webrtcSocket, webtorrentDht;
   bencode = require('bencode');
-  simplePeer = require('simple-peer');
   webrtcSocket = require('webtorrent-dht/webrtc-socket');
   webtorrentDht = require('webtorrent-dht');
   module.exports = {
     'bencode': bencode,
-    'simple-peer': simplePeer,
     'webrtc-socket': webrtcSocket,
     'webtorrent-dht': webtorrentDht
   };
