@@ -287,7 +287,7 @@ encode.list = function (buffers, data) {
 
 module.exports = encode
 
-},{"safe-buffer":28}],3:[function(require,module,exports){
+},{"safe-buffer":29}],3:[function(require,module,exports){
 var bencode = module.exports
 
 bencode.encode = require('./encode')
@@ -1111,7 +1111,7 @@ function toBuffer (str) {
 }
 
 }).call(this,require('_process'))
-},{"_process":25,"bencode":3,"buffer-equals":11,"debug":12,"events":14,"inherits":16,"k-bucket":19,"k-rpc":21,"last-one-wins":22,"lru":23,"randombytes":26,"record-cache":27,"safe-buffer":28,"simple-sha1":8}],5:[function(require,module,exports){
+},{"_process":26,"bencode":3,"buffer-equals":11,"debug":12,"events":14,"inherits":16,"k-bucket":19,"k-rpc":21,"last-one-wins":22,"lru":23,"randombytes":27,"record-cache":28,"safe-buffer":29,"simple-sha1":8}],5:[function(require,module,exports){
 var Client = require('./client')
 var Server = require('./server')
 
@@ -3217,7 +3217,7 @@ function localstorage() {
 }
 
 }).call(this,require('_process'))
-},{"./debug":13,"_process":25}],13:[function(require,module,exports){
+},{"./debug":13,"_process":26}],13:[function(require,module,exports){
 
 /**
  * This is the common logic for both the Node.js and web browser
@@ -4463,7 +4463,7 @@ KBucket.prototype._update = function (node, index, contact) {
   this.emit('updated', incumbent, selection)
 }
 
-},{"events":14,"inherits":16,"randombytes":26}],20:[function(require,module,exports){
+},{"events":14,"inherits":16,"randombytes":27}],20:[function(require,module,exports){
 var dgram = require('dgram')
 var bencode = require('bencode')
 var isIP = require('net').isIP
@@ -4687,7 +4687,7 @@ RPC.prototype._resolveAndQuery = function (peer, query, cb) {
 
 function noop () {}
 
-},{"bencode":3,"buffer-equals":11,"dgram":8,"dns":8,"events":14,"net":8,"safe-buffer":28,"util":31}],21:[function(require,module,exports){
+},{"bencode":3,"buffer-equals":11,"dgram":8,"dns":8,"events":14,"net":8,"safe-buffer":29,"util":32}],21:[function(require,module,exports){
 (function (process){
 var socket = require('k-rpc-socket')
 var KBucket = require('k-bucket')
@@ -5047,7 +5047,7 @@ function toBuffer (str) {
 }
 
 }).call(this,require('_process'))
-},{"_process":25,"buffer-equals":11,"events":14,"k-bucket":19,"k-rpc-socket":20,"randombytes":26,"safe-buffer":28,"util":31}],22:[function(require,module,exports){
+},{"_process":26,"buffer-equals":11,"events":14,"k-bucket":19,"k-rpc-socket":20,"randombytes":27,"safe-buffer":29,"util":32}],22:[function(require,module,exports){
 module.exports = function (work) {
   var pending = null
   var callback = null
@@ -5395,6 +5395,16 @@ function plural(ms, n, name) {
 }
 
 },{}],25:[function(require,module,exports){
+module.exports = exports = window.fetch;
+
+// Needed for TypeScript and Webpack.
+exports.default = window.fetch.bind(window);
+
+exports.Headers = window.Headers;
+exports.Request = window.Request;
+exports.Response = window.Response;
+
+},{}],26:[function(require,module,exports){
 // shim for using process in browser
 var process = module.exports = {};
 
@@ -5580,7 +5590,7 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],26:[function(require,module,exports){
+},{}],27:[function(require,module,exports){
 (function (process,global){
 'use strict'
 
@@ -5622,7 +5632,7 @@ function randomBytes (size, cb) {
 }
 
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"_process":25,"safe-buffer":28}],27:[function(require,module,exports){
+},{"_process":26,"safe-buffer":29}],28:[function(require,module,exports){
 (function (Buffer){
 var EMPTY = []
 
@@ -5785,7 +5795,7 @@ function swap (list, a, b) {
 }
 
 }).call(this,{"isBuffer":require("../is-buffer/index.js")})
-},{"../is-buffer/index.js":17}],28:[function(require,module,exports){
+},{"../is-buffer/index.js":17}],29:[function(require,module,exports){
 /* eslint-disable node/no-deprecated-api */
 var buffer = require('buffer')
 var Buffer = buffer.Buffer
@@ -5849,16 +5859,16 @@ SafeBuffer.allocUnsafeSlow = function (size) {
   return buffer.SlowBuffer(size)
 }
 
-},{"buffer":10}],29:[function(require,module,exports){
+},{"buffer":10}],30:[function(require,module,exports){
 arguments[4][16][0].apply(exports,arguments)
-},{"dup":16}],30:[function(require,module,exports){
+},{"dup":16}],31:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],31:[function(require,module,exports){
+},{}],32:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -6448,7 +6458,7 @@ function hasOwnProperty(obj, prop) {
 }
 
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":30,"_process":25,"inherits":29}],32:[function(require,module,exports){
+},{"./support/isBuffer":31,"_process":26,"inherits":30}],33:[function(require,module,exports){
 (function (Buffer){
 // Generated by LiveScript 1.5.0
 /**
@@ -6856,7 +6866,7 @@ function hasOwnProperty(obj, prop) {
 }).call(this);
 
 }).call(this,require("buffer").Buffer)
-},{"./webrtc-socket":34,"buffer":10,"debug":12,"inherits":16,"k-rpc-socket":20}],33:[function(require,module,exports){
+},{"./webrtc-socket":35,"buffer":10,"debug":12,"inherits":16,"k-rpc-socket":20}],34:[function(require,module,exports){
 (function (Buffer){
 // Generated by LiveScript 1.5.0
 /**
@@ -6909,7 +6919,7 @@ function hasOwnProperty(obj, prop) {
 }).call(this);
 
 }).call(this,require("buffer").Buffer)
-},{"./k-rpc-socket-webrtc":32,"buffer":10,"inherits":16,"k-rpc":21,"randombytes":26}],34:[function(require,module,exports){
+},{"./k-rpc-socket-webrtc":33,"buffer":10,"inherits":16,"k-rpc":21,"randombytes":27}],35:[function(require,module,exports){
 (function (Buffer){
 // Generated by LiveScript 1.5.0
 /**
@@ -6918,14 +6928,14 @@ function hasOwnProperty(obj, prop) {
  * @license 0BSD
  */
 (function(){
-  var bencode, debug, EventEmitter, http, inherits, isIP, nodeFetch, simplePeer, wrtc, PEER_CONNECTION_TIMEOUT, SIMPLE_PEER_OPTS, x$, slice$ = [].slice;
+  var bencode, debug, EventEmitter, http, inherits, isIP, fetch, simplePeer, wrtc, PEER_CONNECTION_TIMEOUT, SIMPLE_PEER_OPTS, x$, slice$ = [].slice;
   bencode = require('bencode');
   debug = require('debug')('webtorrent-dht');
   EventEmitter = require('events').EventEmitter;
   http = require('http');
   inherits = require('inherits');
   isIP = require('isipaddress').test;
-  nodeFetch = require('node-fetch');
+  fetch = require('node-fetch');
   simplePeer = require('simple-peer');
   wrtc = require('wrtc');
   module.exports = webrtcSocket;
@@ -6981,8 +6991,8 @@ function hasOwnProperty(obj, prop) {
       request.on('data', function(chunk){
         body += chunk;
       }).on('end', function(){
-        var x$, peer_connection;
-        x$ = peer_connection = this$._prepare_connection(false);
+        var x$;
+        x$ = this$._prepare_connection(false);
         x$.once('signal', function(signal){
           debug('got signal for HTTP (server): %s', signal);
           signal.extensions = this$._extensions;
@@ -7053,56 +7063,54 @@ function hasOwnProperty(obj, prop) {
       })['catch'](function(){});
     } else {
       this._pending_peer_connections[address + ":" + port] = new Promise(function(resolve, reject){
-        (function(fetch){
-          var x$, peer_connection, timeout, this$ = this;
-          x$ = peer_connection = this._prepare_connection(true);
-          x$.once('signal', function(signal){
-            var init;
-            debug('got signal for HTTP (client): %s', signal);
-            signal.extensions = this$._extensions;
-            init = {
-              method: 'POST',
-              body: JSON.stringify(signal)
-            };
-            fetch("https://" + address + ":" + port, init)['catch'](function(){
-              return fetch("http://" + address + ":" + port, init);
-            }).then(function(response){
-              return response.json();
-            }).then(function(signal){
-              if (peer_connection.destroyed) {
-                reject();
-                return;
-              }
-              peer_connection.signal(signal);
-            })['catch'](function(e){
-              reject();
-              this$.emit('error', e);
-            });
-          });
-          x$.once('connect', function(){
-            var remote_peer_info;
-            remote_peer_info = {
-              address: peer_connection.remoteAddress,
-              port: peer_connection.remotePort
-            };
-            this$._register_http_connection_alias(remote_peer_info.address, remote_peer_info.port, address, port);
+        var x$, peer_connection, timeout;
+        x$ = peer_connection = this$._prepare_connection(true);
+        x$.once('signal', function(signal){
+          var init;
+          debug('got signal for HTTP (client): %s', signal);
+          signal.extensions = this$._extensions;
+          init = {
+            method: 'POST',
+            body: JSON.stringify(signal)
+          };
+          fetch("https://" + address + ":" + port, init)['catch'](function(){
+            return fetch("http://" + address + ":" + port, init);
+          }).then(function(response){
+            return response.json();
+          }).then(function(signal){
             if (peer_connection.destroyed) {
               reject();
               return;
             }
-            this$.send(buffer, offset, length, port, address, callback);
-            resolve(remote_peer_info);
+            peer_connection.signal(signal);
+          })['catch'](function(e){
+            reject();
+            this$.emit('error', e);
           });
-          x$.once('close', function(){
-            clearTimeout(timeout);
-          });
-          timeout = setTimeout(function(){
-            delete this$._pending_peer_connections[address + ":" + port];
-            if (!peer_connection.connected) {
-              reject();
-            }
-          }, this._peer_connection_timeout);
-        }.call(this$, nodeFetch || fetch));
+        });
+        x$.once('connect', function(){
+          var remote_peer_info;
+          remote_peer_info = {
+            address: peer_connection.remoteAddress,
+            port: peer_connection.remotePort
+          };
+          this$._register_http_connection_alias(remote_peer_info.address, remote_peer_info.port, address, port);
+          if (peer_connection.destroyed) {
+            reject();
+            return;
+          }
+          this$.send(buffer, offset, length, port, address, callback);
+          resolve(remote_peer_info);
+        });
+        x$.once('close', function(){
+          clearTimeout(timeout);
+        });
+        timeout = setTimeout(function(){
+          delete this$._pending_peer_connections[address + ":" + port];
+          if (!peer_connection.connected) {
+            reject();
+          }
+        }, this$._peer_connection_timeout);
       });
       this._pending_peer_connections[address + ":" + port]['catch'](function(){});
     }
@@ -7321,7 +7329,7 @@ function hasOwnProperty(obj, prop) {
 }).call(this);
 
 }).call(this,require("buffer").Buffer)
-},{"bencode":3,"buffer":10,"debug":12,"events":14,"http":7,"inherits":16,"isipaddress":18,"node-fetch":7,"simple-peer":8,"wrtc":36}],35:[function(require,module,exports){
+},{"bencode":3,"buffer":10,"debug":12,"events":14,"http":7,"inherits":16,"isipaddress":18,"node-fetch":25,"simple-peer":8,"wrtc":37}],36:[function(require,module,exports){
 (function (Buffer){
 // Generated by LiveScript 1.5.0
 /**
@@ -7370,14 +7378,14 @@ function hasOwnProperty(obj, prop) {
 }).call(this);
 
 }).call(this,require("buffer").Buffer)
-},{"./k-rpc-webrtc":33,"bittorrent-dht":5,"buffer":10,"inherits":16}],36:[function(require,module,exports){
+},{"./k-rpc-webrtc":34,"bittorrent-dht":5,"buffer":10,"inherits":16}],37:[function(require,module,exports){
 'use strict';
 
 exports.RTCIceCandidate = window.RTCIceCandidate;
 exports.RTCPeerConnection = window.RTCPeerConnection;
 exports.RTCSessionDescription = window.RTCSessionDescription;
 
-},{}],37:[function(require,module,exports){
+},{}],38:[function(require,module,exports){
 // Generated by LiveScript 1.5.0
 /**
  * @package Detox DHT
@@ -7396,5 +7404,5 @@ exports.RTCSessionDescription = window.RTCSessionDescription;
   };
 }).call(this);
 
-},{"bencode":3,"webtorrent-dht":35,"webtorrent-dht/webrtc-socket":34}]},{},[37])(37)
+},{"bencode":3,"webtorrent-dht":36,"webtorrent-dht/webrtc-socket":35}]},{},[38])(38)
 });
