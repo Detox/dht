@@ -287,7 +287,7 @@ encode.list = function (buffers, data) {
 
 module.exports = encode
 
-},{"safe-buffer":29}],3:[function(require,module,exports){
+},{"safe-buffer":26}],3:[function(require,module,exports){
 var bencode = module.exports
 
 bencode.encode = require('./encode')
@@ -366,8 +366,8 @@ function DHT (opts) {
   // are disregarded
   var onping = low(ping)
 
-  this.nodes.on('ping', function (older, newer) {
-    onping({older: older, newer: newer})
+  this._rpc.on('ping', function (older, swap) {
+    onping({older: older, swap: swap})
   })
 
   process.nextTick(bootstrap)
@@ -377,13 +377,14 @@ function DHT (opts) {
 
   function ping (opts, cb) {
     var older = opts.older
-    var newer = opts.newer
+    var swap = opts.swap
 
-    self._debug('received ping', older, newer)
-    self._checkAndRemoveNodes(older, function (_, removed) {
-      if (removed) {
-        self._debug('added new node:', newer)
-        self.addNode(newer)
+    self._debug('received ping', older)
+    self._checkNodes(older, false, function (_, deadNode) {
+      if (deadNode) {
+        self._debug('swaping dead node with newer', deadNode)
+        swap(deadNode)
+        return cb()
       }
 
       self._debug('no node added, all other nodes ok')
@@ -394,6 +395,8 @@ function DHT (opts) {
   function onlistening () {
     self.listening = true
     self._debug('listening %d', self.address().port)
+    self.updateBucketTimestamp()
+    self._setBucketCheckInterval()
     self.emit('listening')
   }
 
@@ -470,41 +473,37 @@ DHT.prototype.updateBucketTimestamp = function () {
 DHT.prototype._checkAndRemoveNodes = function (nodes, cb) {
   var self = this
 
-  this._checkNodes(nodes, function (_, node) {
+  this._checkNodes(nodes, true, function (_, node) {
     if (node) self.removeNode(node.id)
     cb(null, node)
   })
 }
 
-DHT.prototype._checkNodes = function (nodes, cb) {
+DHT.prototype._checkNodes = function (nodes, force, cb) {
   var self = this
 
+  test(nodes)
+
   function test (acc) {
-    if (!acc.length) {
-      return cb(null)
+    var current = null
+
+    while (acc.length) {
+      current = acc.pop()
+      if (!current.id || force) break
+      if (Date.now() - (current.seen || 0) > 10000) break // not pinged within 10s
+      current = null
     }
 
-    var current = acc.pop()
+    if (!current) return cb(null)
 
     self._sendPing(current, function (err) {
       if (!err) {
         self.updateBucketTimestamp()
         return test(acc)
       }
-
-      // retry
-      self._sendPing(current, function (er) {
-        if (err) {
-          return cb(null, current)
-        }
-
-        self.updateBucketTimestamp()
-        return test(acc)
-      })
+      cb(null, current)
     })
   }
-
-  test(nodes)
 }
 
 DHT.prototype.addNode = function (node) {
@@ -792,9 +791,6 @@ DHT.prototype.address = function () {
 // listen([port], [address], [onlistening])
 DHT.prototype.listen = function () {
   this._rpc.bind.apply(this._rpc, arguments)
-
-  this.updateBucketTimestamp()
-  this._setBucketCheckInterval()
 }
 
 DHT.prototype.destroy = function (cb) {
@@ -1111,7 +1107,7 @@ function toBuffer (str) {
 }
 
 }).call(this,require('_process'))
-},{"_process":26,"bencode":3,"buffer-equals":11,"debug":12,"events":14,"inherits":16,"k-bucket":19,"k-rpc":21,"last-one-wins":22,"lru":23,"randombytes":27,"record-cache":28,"safe-buffer":29,"simple-sha1":8}],5:[function(require,module,exports){
+},{"_process":23,"bencode":3,"buffer-equals":11,"debug":8,"events":12,"inherits":14,"k-bucket":17,"k-rpc":19,"last-one-wins":20,"lru":21,"randombytes":24,"record-cache":25,"safe-buffer":26,"simple-sha1":8}],5:[function(require,module,exports){
 var Client = require('./client')
 var Server = require('./server')
 
@@ -1154,65 +1150,97 @@ for (var i = 0, len = code.length; i < len; ++i) {
 revLookup['-'.charCodeAt(0)] = 62
 revLookup['_'.charCodeAt(0)] = 63
 
-function placeHoldersCount (b64) {
+function getLens (b64) {
   var len = b64.length
+
   if (len % 4 > 0) {
     throw new Error('Invalid string. Length must be a multiple of 4')
   }
 
-  // the number of equal signs (place holders)
-  // if there are two placeholders, than the two characters before it
-  // represent one byte
-  // if there is only one, then the three characters before it represent 2 bytes
-  // this is just a cheap hack to not do indexOf twice
-  return b64[len - 2] === '=' ? 2 : b64[len - 1] === '=' ? 1 : 0
+  // Trim off extra bytes after placeholder bytes are found
+  // See: https://github.com/beatgammit/base64-js/issues/42
+  var validLen = b64.indexOf('=')
+  if (validLen === -1) validLen = len
+
+  var placeHoldersLen = validLen === len
+    ? 0
+    : 4 - (validLen % 4)
+
+  return [validLen, placeHoldersLen]
 }
 
+// base64 is 4/3 + up to two characters of the original data
 function byteLength (b64) {
-  // base64 is 4/3 + up to two characters of the original data
-  return (b64.length * 3 / 4) - placeHoldersCount(b64)
+  var lens = getLens(b64)
+  var validLen = lens[0]
+  var placeHoldersLen = lens[1]
+  return ((validLen + placeHoldersLen) * 3 / 4) - placeHoldersLen
+}
+
+function _byteLength (b64, validLen, placeHoldersLen) {
+  return ((validLen + placeHoldersLen) * 3 / 4) - placeHoldersLen
 }
 
 function toByteArray (b64) {
-  var i, l, tmp, placeHolders, arr
-  var len = b64.length
-  placeHolders = placeHoldersCount(b64)
+  var tmp
+  var lens = getLens(b64)
+  var validLen = lens[0]
+  var placeHoldersLen = lens[1]
 
-  arr = new Arr((len * 3 / 4) - placeHolders)
+  var arr = new Arr(_byteLength(b64, validLen, placeHoldersLen))
+
+  var curByte = 0
 
   // if there are placeholders, only get up to the last complete 4 chars
-  l = placeHolders > 0 ? len - 4 : len
+  var len = placeHoldersLen > 0
+    ? validLen - 4
+    : validLen
 
-  var L = 0
-
-  for (i = 0; i < l; i += 4) {
-    tmp = (revLookup[b64.charCodeAt(i)] << 18) | (revLookup[b64.charCodeAt(i + 1)] << 12) | (revLookup[b64.charCodeAt(i + 2)] << 6) | revLookup[b64.charCodeAt(i + 3)]
-    arr[L++] = (tmp >> 16) & 0xFF
-    arr[L++] = (tmp >> 8) & 0xFF
-    arr[L++] = tmp & 0xFF
+  for (var i = 0; i < len; i += 4) {
+    tmp =
+      (revLookup[b64.charCodeAt(i)] << 18) |
+      (revLookup[b64.charCodeAt(i + 1)] << 12) |
+      (revLookup[b64.charCodeAt(i + 2)] << 6) |
+      revLookup[b64.charCodeAt(i + 3)]
+    arr[curByte++] = (tmp >> 16) & 0xFF
+    arr[curByte++] = (tmp >> 8) & 0xFF
+    arr[curByte++] = tmp & 0xFF
   }
 
-  if (placeHolders === 2) {
-    tmp = (revLookup[b64.charCodeAt(i)] << 2) | (revLookup[b64.charCodeAt(i + 1)] >> 4)
-    arr[L++] = tmp & 0xFF
-  } else if (placeHolders === 1) {
-    tmp = (revLookup[b64.charCodeAt(i)] << 10) | (revLookup[b64.charCodeAt(i + 1)] << 4) | (revLookup[b64.charCodeAt(i + 2)] >> 2)
-    arr[L++] = (tmp >> 8) & 0xFF
-    arr[L++] = tmp & 0xFF
+  if (placeHoldersLen === 2) {
+    tmp =
+      (revLookup[b64.charCodeAt(i)] << 2) |
+      (revLookup[b64.charCodeAt(i + 1)] >> 4)
+    arr[curByte++] = tmp & 0xFF
+  }
+
+  if (placeHoldersLen === 1) {
+    tmp =
+      (revLookup[b64.charCodeAt(i)] << 10) |
+      (revLookup[b64.charCodeAt(i + 1)] << 4) |
+      (revLookup[b64.charCodeAt(i + 2)] >> 2)
+    arr[curByte++] = (tmp >> 8) & 0xFF
+    arr[curByte++] = tmp & 0xFF
   }
 
   return arr
 }
 
 function tripletToBase64 (num) {
-  return lookup[num >> 18 & 0x3F] + lookup[num >> 12 & 0x3F] + lookup[num >> 6 & 0x3F] + lookup[num & 0x3F]
+  return lookup[num >> 18 & 0x3F] +
+    lookup[num >> 12 & 0x3F] +
+    lookup[num >> 6 & 0x3F] +
+    lookup[num & 0x3F]
 }
 
 function encodeChunk (uint8, start, end) {
   var tmp
   var output = []
   for (var i = start; i < end; i += 3) {
-    tmp = ((uint8[i] << 16) & 0xFF0000) + ((uint8[i + 1] << 8) & 0xFF00) + (uint8[i + 2] & 0xFF)
+    tmp =
+      ((uint8[i] << 16) & 0xFF0000) +
+      ((uint8[i + 1] << 8) & 0xFF00) +
+      (uint8[i + 2] & 0xFF)
     output.push(tripletToBase64(tmp))
   }
   return output.join('')
@@ -1222,30 +1250,33 @@ function fromByteArray (uint8) {
   var tmp
   var len = uint8.length
   var extraBytes = len % 3 // if we have 1 byte left, pad 2 bytes
-  var output = ''
   var parts = []
   var maxChunkLength = 16383 // must be multiple of 3
 
   // go through the array every three bytes, we'll deal with trailing stuff later
   for (var i = 0, len2 = len - extraBytes; i < len2; i += maxChunkLength) {
-    parts.push(encodeChunk(uint8, i, (i + maxChunkLength) > len2 ? len2 : (i + maxChunkLength)))
+    parts.push(encodeChunk(
+      uint8, i, (i + maxChunkLength) > len2 ? len2 : (i + maxChunkLength)
+    ))
   }
 
   // pad the end with zeros, but make sure to not forget the extra bytes
   if (extraBytes === 1) {
     tmp = uint8[len - 1]
-    output += lookup[tmp >> 2]
-    output += lookup[(tmp << 4) & 0x3F]
-    output += '=='
+    parts.push(
+      lookup[tmp >> 2] +
+      lookup[(tmp << 4) & 0x3F] +
+      '=='
+    )
   } else if (extraBytes === 2) {
-    tmp = (uint8[len - 2] << 8) + (uint8[len - 1])
-    output += lookup[tmp >> 10]
-    output += lookup[(tmp >> 4) & 0x3F]
-    output += lookup[(tmp << 2) & 0x3F]
-    output += '='
+    tmp = (uint8[len - 2] << 8) + uint8[len - 1]
+    parts.push(
+      lookup[tmp >> 10] +
+      lookup[(tmp >> 4) & 0x3F] +
+      lookup[(tmp << 2) & 0x3F] +
+      '='
+    )
   }
-
-  parts.push(output)
 
   return parts.join('')
 }
@@ -2988,7 +3019,7 @@ function numberIsNaN (obj) {
   return obj !== obj // eslint-disable-line no-self-compare
 }
 
-},{"base64-js":9,"ieee754":15}],11:[function(require,module,exports){
+},{"base64-js":9,"ieee754":13}],11:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 module.exports = function (a, b) {
@@ -3018,433 +3049,7 @@ module.exports = function (a, b) {
 };
 
 }).call(this,{"isBuffer":require("../is-buffer/index.js")})
-},{"../is-buffer/index.js":17}],12:[function(require,module,exports){
-(function (process){
-/**
- * This is the web browser implementation of `debug()`.
- *
- * Expose `debug()` as the module.
- */
-
-exports = module.exports = require('./debug');
-exports.log = log;
-exports.formatArgs = formatArgs;
-exports.save = save;
-exports.load = load;
-exports.useColors = useColors;
-exports.storage = 'undefined' != typeof chrome
-               && 'undefined' != typeof chrome.storage
-                  ? chrome.storage.local
-                  : localstorage();
-
-/**
- * Colors.
- */
-
-exports.colors = [
-  '#0000CC', '#0000FF', '#0033CC', '#0033FF', '#0066CC', '#0066FF', '#0099CC',
-  '#0099FF', '#00CC00', '#00CC33', '#00CC66', '#00CC99', '#00CCCC', '#00CCFF',
-  '#3300CC', '#3300FF', '#3333CC', '#3333FF', '#3366CC', '#3366FF', '#3399CC',
-  '#3399FF', '#33CC00', '#33CC33', '#33CC66', '#33CC99', '#33CCCC', '#33CCFF',
-  '#6600CC', '#6600FF', '#6633CC', '#6633FF', '#66CC00', '#66CC33', '#9900CC',
-  '#9900FF', '#9933CC', '#9933FF', '#99CC00', '#99CC33', '#CC0000', '#CC0033',
-  '#CC0066', '#CC0099', '#CC00CC', '#CC00FF', '#CC3300', '#CC3333', '#CC3366',
-  '#CC3399', '#CC33CC', '#CC33FF', '#CC6600', '#CC6633', '#CC9900', '#CC9933',
-  '#CCCC00', '#CCCC33', '#FF0000', '#FF0033', '#FF0066', '#FF0099', '#FF00CC',
-  '#FF00FF', '#FF3300', '#FF3333', '#FF3366', '#FF3399', '#FF33CC', '#FF33FF',
-  '#FF6600', '#FF6633', '#FF9900', '#FF9933', '#FFCC00', '#FFCC33'
-];
-
-/**
- * Currently only WebKit-based Web Inspectors, Firefox >= v31,
- * and the Firebug extension (any Firefox version) are known
- * to support "%c" CSS customizations.
- *
- * TODO: add a `localStorage` variable to explicitly enable/disable colors
- */
-
-function useColors() {
-  // NB: In an Electron preload script, document will be defined but not fully
-  // initialized. Since we know we're in Chrome, we'll just detect this case
-  // explicitly
-  if (typeof window !== 'undefined' && window.process && window.process.type === 'renderer') {
-    return true;
-  }
-
-  // Internet Explorer and Edge do not support colors.
-  if (typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.toLowerCase().match(/(edge|trident)\/(\d+)/)) {
-    return false;
-  }
-
-  // is webkit? http://stackoverflow.com/a/16459606/376773
-  // document is undefined in react-native: https://github.com/facebook/react-native/pull/1632
-  return (typeof document !== 'undefined' && document.documentElement && document.documentElement.style && document.documentElement.style.WebkitAppearance) ||
-    // is firebug? http://stackoverflow.com/a/398120/376773
-    (typeof window !== 'undefined' && window.console && (window.console.firebug || (window.console.exception && window.console.table))) ||
-    // is firefox >= v31?
-    // https://developer.mozilla.org/en-US/docs/Tools/Web_Console#Styling_messages
-    (typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.toLowerCase().match(/firefox\/(\d+)/) && parseInt(RegExp.$1, 10) >= 31) ||
-    // double check webkit in userAgent just in case we are in a worker
-    (typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.toLowerCase().match(/applewebkit\/(\d+)/));
-}
-
-/**
- * Map %j to `JSON.stringify()`, since no Web Inspectors do that by default.
- */
-
-exports.formatters.j = function(v) {
-  try {
-    return JSON.stringify(v);
-  } catch (err) {
-    return '[UnexpectedJSONParseError]: ' + err.message;
-  }
-};
-
-
-/**
- * Colorize log arguments if enabled.
- *
- * @api public
- */
-
-function formatArgs(args) {
-  var useColors = this.useColors;
-
-  args[0] = (useColors ? '%c' : '')
-    + this.namespace
-    + (useColors ? ' %c' : ' ')
-    + args[0]
-    + (useColors ? '%c ' : ' ')
-    + '+' + exports.humanize(this.diff);
-
-  if (!useColors) return;
-
-  var c = 'color: ' + this.color;
-  args.splice(1, 0, c, 'color: inherit')
-
-  // the final "%c" is somewhat tricky, because there could be other
-  // arguments passed either before or after the %c, so we need to
-  // figure out the correct index to insert the CSS into
-  var index = 0;
-  var lastC = 0;
-  args[0].replace(/%[a-zA-Z%]/g, function(match) {
-    if ('%%' === match) return;
-    index++;
-    if ('%c' === match) {
-      // we only are interested in the *last* %c
-      // (the user may have provided their own)
-      lastC = index;
-    }
-  });
-
-  args.splice(lastC, 0, c);
-}
-
-/**
- * Invokes `console.log()` when available.
- * No-op when `console.log` is not a "function".
- *
- * @api public
- */
-
-function log() {
-  // this hackery is required for IE8/9, where
-  // the `console.log` function doesn't have 'apply'
-  return 'object' === typeof console
-    && console.log
-    && Function.prototype.apply.call(console.log, console, arguments);
-}
-
-/**
- * Save `namespaces`.
- *
- * @param {String} namespaces
- * @api private
- */
-
-function save(namespaces) {
-  try {
-    if (null == namespaces) {
-      exports.storage.removeItem('debug');
-    } else {
-      exports.storage.debug = namespaces;
-    }
-  } catch(e) {}
-}
-
-/**
- * Load `namespaces`.
- *
- * @return {String} returns the previously persisted debug modes
- * @api private
- */
-
-function load() {
-  var r;
-  try {
-    r = exports.storage.debug;
-  } catch(e) {}
-
-  // If debug isn't set in LS, and we're in Electron, try to load $DEBUG
-  if (!r && typeof process !== 'undefined' && 'env' in process) {
-    r = process.env.DEBUG;
-  }
-
-  return r;
-}
-
-/**
- * Enable namespaces listed in `localStorage.debug` initially.
- */
-
-exports.enable(load());
-
-/**
- * Localstorage attempts to return the localstorage.
- *
- * This is necessary because safari throws
- * when a user disables cookies/localstorage
- * and you attempt to access it.
- *
- * @return {LocalStorage}
- * @api private
- */
-
-function localstorage() {
-  try {
-    return window.localStorage;
-  } catch (e) {}
-}
-
-}).call(this,require('_process'))
-},{"./debug":13,"_process":26}],13:[function(require,module,exports){
-
-/**
- * This is the common logic for both the Node.js and web browser
- * implementations of `debug()`.
- *
- * Expose `debug()` as the module.
- */
-
-exports = module.exports = createDebug.debug = createDebug['default'] = createDebug;
-exports.coerce = coerce;
-exports.disable = disable;
-exports.enable = enable;
-exports.enabled = enabled;
-exports.humanize = require('ms');
-
-/**
- * Active `debug` instances.
- */
-exports.instances = [];
-
-/**
- * The currently active debug mode names, and names to skip.
- */
-
-exports.names = [];
-exports.skips = [];
-
-/**
- * Map of special "%n" handling functions, for the debug "format" argument.
- *
- * Valid key names are a single, lower or upper-case letter, i.e. "n" and "N".
- */
-
-exports.formatters = {};
-
-/**
- * Select a color.
- * @param {String} namespace
- * @return {Number}
- * @api private
- */
-
-function selectColor(namespace) {
-  var hash = 0, i;
-
-  for (i in namespace) {
-    hash  = ((hash << 5) - hash) + namespace.charCodeAt(i);
-    hash |= 0; // Convert to 32bit integer
-  }
-
-  return exports.colors[Math.abs(hash) % exports.colors.length];
-}
-
-/**
- * Create a debugger with the given `namespace`.
- *
- * @param {String} namespace
- * @return {Function}
- * @api public
- */
-
-function createDebug(namespace) {
-
-  var prevTime;
-
-  function debug() {
-    // disabled?
-    if (!debug.enabled) return;
-
-    var self = debug;
-
-    // set `diff` timestamp
-    var curr = +new Date();
-    var ms = curr - (prevTime || curr);
-    self.diff = ms;
-    self.prev = prevTime;
-    self.curr = curr;
-    prevTime = curr;
-
-    // turn the `arguments` into a proper Array
-    var args = new Array(arguments.length);
-    for (var i = 0; i < args.length; i++) {
-      args[i] = arguments[i];
-    }
-
-    args[0] = exports.coerce(args[0]);
-
-    if ('string' !== typeof args[0]) {
-      // anything else let's inspect with %O
-      args.unshift('%O');
-    }
-
-    // apply any `formatters` transformations
-    var index = 0;
-    args[0] = args[0].replace(/%([a-zA-Z%])/g, function(match, format) {
-      // if we encounter an escaped % then don't increase the array index
-      if (match === '%%') return match;
-      index++;
-      var formatter = exports.formatters[format];
-      if ('function' === typeof formatter) {
-        var val = args[index];
-        match = formatter.call(self, val);
-
-        // now we need to remove `args[index]` since it's inlined in the `format`
-        args.splice(index, 1);
-        index--;
-      }
-      return match;
-    });
-
-    // apply env-specific formatting (colors, etc.)
-    exports.formatArgs.call(self, args);
-
-    var logFn = debug.log || exports.log || console.log.bind(console);
-    logFn.apply(self, args);
-  }
-
-  debug.namespace = namespace;
-  debug.enabled = exports.enabled(namespace);
-  debug.useColors = exports.useColors();
-  debug.color = selectColor(namespace);
-  debug.destroy = destroy;
-
-  // env-specific initialization logic for debug instances
-  if ('function' === typeof exports.init) {
-    exports.init(debug);
-  }
-
-  exports.instances.push(debug);
-
-  return debug;
-}
-
-function destroy () {
-  var index = exports.instances.indexOf(this);
-  if (index !== -1) {
-    exports.instances.splice(index, 1);
-    return true;
-  } else {
-    return false;
-  }
-}
-
-/**
- * Enables a debug mode by namespaces. This can include modes
- * separated by a colon and wildcards.
- *
- * @param {String} namespaces
- * @api public
- */
-
-function enable(namespaces) {
-  exports.save(namespaces);
-
-  exports.names = [];
-  exports.skips = [];
-
-  var i;
-  var split = (typeof namespaces === 'string' ? namespaces : '').split(/[\s,]+/);
-  var len = split.length;
-
-  for (i = 0; i < len; i++) {
-    if (!split[i]) continue; // ignore empty strings
-    namespaces = split[i].replace(/\*/g, '.*?');
-    if (namespaces[0] === '-') {
-      exports.skips.push(new RegExp('^' + namespaces.substr(1) + '$'));
-    } else {
-      exports.names.push(new RegExp('^' + namespaces + '$'));
-    }
-  }
-
-  for (i = 0; i < exports.instances.length; i++) {
-    var instance = exports.instances[i];
-    instance.enabled = exports.enabled(instance.namespace);
-  }
-}
-
-/**
- * Disable debug output.
- *
- * @api public
- */
-
-function disable() {
-  exports.enable('');
-}
-
-/**
- * Returns true if the given mode name is enabled, false otherwise.
- *
- * @param {String} name
- * @return {Boolean}
- * @api public
- */
-
-function enabled(name) {
-  if (name[name.length - 1] === '*') {
-    return true;
-  }
-  var i, len;
-  for (i = 0, len = exports.skips.length; i < len; i++) {
-    if (exports.skips[i].test(name)) {
-      return false;
-    }
-  }
-  for (i = 0, len = exports.names.length; i < len; i++) {
-    if (exports.names[i].test(name)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Coerce `val`.
- *
- * @param {Mixed} val
- * @return {Mixed}
- * @api private
- */
-
-function coerce(val) {
-  if (val instanceof Error) return val.stack || val.message;
-  return val;
-}
-
-},{"ms":24}],14:[function(require,module,exports){
+},{"../is-buffer/index.js":15}],12:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -3748,7 +3353,7 @@ function isUndefined(arg) {
   return arg === void 0;
 }
 
-},{}],15:[function(require,module,exports){
+},{}],13:[function(require,module,exports){
 exports.read = function (buffer, offset, isLE, mLen, nBytes) {
   var e, m
   var eLen = (nBytes * 8) - mLen - 1
@@ -3834,7 +3439,7 @@ exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
   buffer[offset + i - d] |= s * 128
 }
 
-},{}],16:[function(require,module,exports){
+},{}],14:[function(require,module,exports){
 if (typeof Object.create === 'function') {
   // implementation from standard node.js 'util' module
   module.exports = function inherits(ctor, superCtor) {
@@ -3859,7 +3464,7 @@ if (typeof Object.create === 'function') {
   }
 }
 
-},{}],17:[function(require,module,exports){
+},{}],15:[function(require,module,exports){
 /*!
  * Determine if an object is a Buffer
  *
@@ -3882,7 +3487,7 @@ function isSlowBuffer (obj) {
   return typeof obj.readFloatLE === 'function' && typeof obj.slice === 'function' && isBuffer(obj.slice(0, 0))
 }
 
-},{}],18:[function(require,module,exports){
+},{}],16:[function(require,module,exports){
 (function(module) {
 
     /**
@@ -4115,7 +3720,7 @@ function isSlowBuffer (obj) {
         future: testFuture
     };
 }(module));
-},{}],19:[function(require,module,exports){
+},{}],17:[function(require,module,exports){
 /*
 index.js - Kademlia DHT K-bucket implementation as a binary tree.
 
@@ -4463,7 +4068,7 @@ KBucket.prototype._update = function (node, index, contact) {
   this.emit('updated', incumbent, selection)
 }
 
-},{"events":14,"inherits":16,"randombytes":27}],20:[function(require,module,exports){
+},{"events":12,"inherits":14,"randombytes":24}],18:[function(require,module,exports){
 var dgram = require('dgram')
 var bencode = require('bencode')
 var isIP = require('net').isIP
@@ -4687,7 +4292,7 @@ RPC.prototype._resolveAndQuery = function (peer, query, cb) {
 
 function noop () {}
 
-},{"bencode":3,"buffer-equals":11,"dgram":8,"dns":8,"events":14,"net":8,"safe-buffer":29,"util":32}],21:[function(require,module,exports){
+},{"bencode":3,"buffer-equals":11,"dgram":8,"dns":8,"events":12,"net":8,"safe-buffer":26,"util":29}],19:[function(require,module,exports){
 (function (process){
 var socket = require('k-rpc-socket')
 var KBucket = require('k-bucket')
@@ -4765,12 +4370,18 @@ function RPC (opts) {
   }
 
   function addNode (data, peer) {
-    if (data && isNodeId(data.id, self._idLength) && !self.nodes.get(data.id) && !equals(data.id, self.id)) {
+    if (data && isNodeId(data.id, self._idLength) && !equals(data.id, self.id)) {
+      var old = self.nodes.get(data.id)
+      if (old) {
+        old.seen = Date.now()
+        return
+      }
       self._addNode({
         id: data.id,
         host: peer.address || peer.host,
         port: peer.port,
-        distance: 0
+        distance: 0,
+        seen: Date.now()
       })
     }
   }
@@ -4855,7 +4466,11 @@ RPC.prototype.clear = function () {
   this.nodes.on('ping', onping)
 
   function onping (older, newer) {
-    self.emit('ping', older, newer)
+    self.emit('ping', older, function swap (deadNode) {
+      if (!deadNode) return
+      if (deadNode.id) self.nodes.remove(deadNode.id)
+      self._addNode(newer)
+    })
   }
 }
 
@@ -5047,7 +4662,7 @@ function toBuffer (str) {
 }
 
 }).call(this,require('_process'))
-},{"_process":26,"buffer-equals":11,"events":14,"k-bucket":19,"k-rpc-socket":20,"randombytes":27,"safe-buffer":29,"util":32}],22:[function(require,module,exports){
+},{"_process":23,"buffer-equals":11,"events":12,"k-bucket":17,"k-rpc-socket":18,"randombytes":24,"safe-buffer":26,"util":29}],20:[function(require,module,exports){
 module.exports = function (work) {
   var pending = null
   var callback = null
@@ -5093,7 +4708,7 @@ module.exports = function (work) {
 
 function noop (_) {}
 
-},{}],23:[function(require,module,exports){
+},{}],21:[function(require,module,exports){
 var events = require('events')
 var inherits = require('inherits')
 
@@ -5240,161 +4855,7 @@ LRU.prototype.evict = function () {
   this.emit('evict', {key: key, value: value})
 }
 
-},{"events":14,"inherits":16}],24:[function(require,module,exports){
-/**
- * Helpers.
- */
-
-var s = 1000;
-var m = s * 60;
-var h = m * 60;
-var d = h * 24;
-var y = d * 365.25;
-
-/**
- * Parse or format the given `val`.
- *
- * Options:
- *
- *  - `long` verbose formatting [false]
- *
- * @param {String|Number} val
- * @param {Object} [options]
- * @throws {Error} throw an error if val is not a non-empty string or a number
- * @return {String|Number}
- * @api public
- */
-
-module.exports = function(val, options) {
-  options = options || {};
-  var type = typeof val;
-  if (type === 'string' && val.length > 0) {
-    return parse(val);
-  } else if (type === 'number' && isNaN(val) === false) {
-    return options.long ? fmtLong(val) : fmtShort(val);
-  }
-  throw new Error(
-    'val is not a non-empty string or a valid number. val=' +
-      JSON.stringify(val)
-  );
-};
-
-/**
- * Parse the given `str` and return milliseconds.
- *
- * @param {String} str
- * @return {Number}
- * @api private
- */
-
-function parse(str) {
-  str = String(str);
-  if (str.length > 100) {
-    return;
-  }
-  var match = /^((?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|years?|yrs?|y)?$/i.exec(
-    str
-  );
-  if (!match) {
-    return;
-  }
-  var n = parseFloat(match[1]);
-  var type = (match[2] || 'ms').toLowerCase();
-  switch (type) {
-    case 'years':
-    case 'year':
-    case 'yrs':
-    case 'yr':
-    case 'y':
-      return n * y;
-    case 'days':
-    case 'day':
-    case 'd':
-      return n * d;
-    case 'hours':
-    case 'hour':
-    case 'hrs':
-    case 'hr':
-    case 'h':
-      return n * h;
-    case 'minutes':
-    case 'minute':
-    case 'mins':
-    case 'min':
-    case 'm':
-      return n * m;
-    case 'seconds':
-    case 'second':
-    case 'secs':
-    case 'sec':
-    case 's':
-      return n * s;
-    case 'milliseconds':
-    case 'millisecond':
-    case 'msecs':
-    case 'msec':
-    case 'ms':
-      return n;
-    default:
-      return undefined;
-  }
-}
-
-/**
- * Short format for `ms`.
- *
- * @param {Number} ms
- * @return {String}
- * @api private
- */
-
-function fmtShort(ms) {
-  if (ms >= d) {
-    return Math.round(ms / d) + 'd';
-  }
-  if (ms >= h) {
-    return Math.round(ms / h) + 'h';
-  }
-  if (ms >= m) {
-    return Math.round(ms / m) + 'm';
-  }
-  if (ms >= s) {
-    return Math.round(ms / s) + 's';
-  }
-  return ms + 'ms';
-}
-
-/**
- * Long format for `ms`.
- *
- * @param {Number} ms
- * @return {String}
- * @api private
- */
-
-function fmtLong(ms) {
-  return plural(ms, d, 'day') ||
-    plural(ms, h, 'hour') ||
-    plural(ms, m, 'minute') ||
-    plural(ms, s, 'second') ||
-    ms + ' ms';
-}
-
-/**
- * Pluralization helper.
- */
-
-function plural(ms, n, name) {
-  if (ms < n) {
-    return;
-  }
-  if (ms < n * 1.5) {
-    return Math.floor(ms / n) + ' ' + name;
-  }
-  return Math.ceil(ms / n) + ' ' + name + 's';
-}
-
-},{}],25:[function(require,module,exports){
+},{"events":12,"inherits":14}],22:[function(require,module,exports){
 module.exports = exports = window.fetch;
 
 // Needed for TypeScript and Webpack.
@@ -5404,7 +4865,7 @@ exports.Headers = window.Headers;
 exports.Request = window.Request;
 exports.Response = window.Response;
 
-},{}],26:[function(require,module,exports){
+},{}],23:[function(require,module,exports){
 // shim for using process in browser
 var process = module.exports = {};
 
@@ -5590,7 +5051,7 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],27:[function(require,module,exports){
+},{}],24:[function(require,module,exports){
 (function (process,global){
 'use strict'
 
@@ -5632,7 +5093,7 @@ function randomBytes (size, cb) {
 }
 
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"_process":26,"safe-buffer":29}],28:[function(require,module,exports){
+},{"_process":23,"safe-buffer":26}],25:[function(require,module,exports){
 (function (Buffer){
 var EMPTY = []
 
@@ -5645,7 +5106,7 @@ function RecordSet () {
 
 RecordSet.prototype.add = function (record, value) {
   var k = toString(record)
-  var r = this.map.get(record)
+  var r = this.map.get(k)
   if (r) return false
 
   r = {index: this.list.length, record: value || record}
@@ -5656,7 +5117,7 @@ RecordSet.prototype.add = function (record, value) {
 
 RecordSet.prototype.remove = function (record) {
   var k = toString(record)
-  var r = this.map.get(record)
+  var r = this.map.get(k)
   if (!r) return false
 
   swap(this.list, r.index, this.list.length - 1)
@@ -5795,7 +5256,7 @@ function swap (list, a, b) {
 }
 
 }).call(this,{"isBuffer":require("../is-buffer/index.js")})
-},{"../is-buffer/index.js":17}],29:[function(require,module,exports){
+},{"../is-buffer/index.js":15}],26:[function(require,module,exports){
 /* eslint-disable node/no-deprecated-api */
 var buffer = require('buffer')
 var Buffer = buffer.Buffer
@@ -5859,16 +5320,16 @@ SafeBuffer.allocUnsafeSlow = function (size) {
   return buffer.SlowBuffer(size)
 }
 
-},{"buffer":10}],30:[function(require,module,exports){
-arguments[4][16][0].apply(exports,arguments)
-},{"dup":16}],31:[function(require,module,exports){
+},{"buffer":10}],27:[function(require,module,exports){
+arguments[4][14][0].apply(exports,arguments)
+},{"dup":14}],28:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],32:[function(require,module,exports){
+},{}],29:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -6458,7 +5919,7 @@ function hasOwnProperty(obj, prop) {
 }
 
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":31,"_process":26,"inherits":30}],33:[function(require,module,exports){
+},{"./support/isBuffer":28,"_process":23,"inherits":27}],30:[function(require,module,exports){
 (function (Buffer){
 // Generated by LiveScript 1.5.0
 /**
@@ -6866,7 +6327,7 @@ function hasOwnProperty(obj, prop) {
 }).call(this);
 
 }).call(this,require("buffer").Buffer)
-},{"./webrtc-socket":35,"buffer":10,"debug":12,"inherits":16,"k-rpc-socket":20}],34:[function(require,module,exports){
+},{"./webrtc-socket":32,"buffer":10,"debug":8,"inherits":14,"k-rpc-socket":18}],31:[function(require,module,exports){
 (function (Buffer){
 // Generated by LiveScript 1.5.0
 /**
@@ -6919,7 +6380,7 @@ function hasOwnProperty(obj, prop) {
 }).call(this);
 
 }).call(this,require("buffer").Buffer)
-},{"./k-rpc-socket-webrtc":33,"buffer":10,"inherits":16,"k-rpc":21,"randombytes":27}],35:[function(require,module,exports){
+},{"./k-rpc-socket-webrtc":30,"buffer":10,"inherits":14,"k-rpc":19,"randombytes":24}],32:[function(require,module,exports){
 (function (Buffer){
 // Generated by LiveScript 1.5.0
 /**
@@ -7080,7 +6541,7 @@ function hasOwnProperty(obj, prop) {
             body: JSON.stringify(signal)
           };
           fetch("https://" + address + ":" + port, init)['catch'](function(e){
-            if (location.protocol === 'http:') {
+            if (typeof location === 'undefined' || location.protocol === 'http:') {
               return fetch("http://" + address + ":" + port, init);
             } else {
               throw e;
@@ -7340,7 +6801,7 @@ function hasOwnProperty(obj, prop) {
 }).call(this);
 
 }).call(this,require("buffer").Buffer)
-},{"bencode":3,"buffer":10,"debug":12,"events":14,"http":7,"inherits":16,"isipaddress":18,"node-fetch":25,"simple-peer":8,"wrtc":37}],36:[function(require,module,exports){
+},{"bencode":3,"buffer":10,"debug":8,"events":12,"http":7,"inherits":14,"isipaddress":16,"node-fetch":22,"simple-peer":8,"wrtc":34}],33:[function(require,module,exports){
 (function (Buffer){
 // Generated by LiveScript 1.5.0
 /**
@@ -7389,14 +6850,14 @@ function hasOwnProperty(obj, prop) {
 }).call(this);
 
 }).call(this,require("buffer").Buffer)
-},{"./k-rpc-webrtc":34,"bittorrent-dht":5,"buffer":10,"inherits":16}],37:[function(require,module,exports){
+},{"./k-rpc-webrtc":31,"bittorrent-dht":5,"buffer":10,"inherits":14}],34:[function(require,module,exports){
 'use strict';
 
 exports.RTCIceCandidate = window.RTCIceCandidate;
 exports.RTCPeerConnection = window.RTCPeerConnection;
 exports.RTCSessionDescription = window.RTCSessionDescription;
 
-},{}],38:[function(require,module,exports){
+},{}],35:[function(require,module,exports){
 // Generated by LiveScript 1.5.0
 /**
  * @package Detox DHT
@@ -7415,5 +6876,5 @@ exports.RTCSessionDescription = window.RTCSessionDescription;
   };
 }).call(this);
 
-},{"bencode":3,"webtorrent-dht":36,"webtorrent-dht/webrtc-socket":35}]},{},[38])(38)
+},{"bencode":3,"webtorrent-dht":33,"webtorrent-dht/webrtc-socket":32}]},{},[35])(35)
 });
