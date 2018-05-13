@@ -1,12 +1,11 @@
 {
 	"name"            : "@detox/dht",
-	"description"     : "Recompiled webtorrent-dht for Detox's purposes",
+	"description"     : "",
 	"keywords"        : [
 		"detox",
-		"dht",
-		"webtorrent-dht"
+		"dht"
 	],
-	"version"         : "0.14.7",
+	"version"         : "",
 	"homepage"        : "https://github.com/Detox/dht",
 	"author"          : "Nazar Mokrynskyi <nazar@mokrynskyi.com>",
 	"repository"      : {
@@ -20,13 +19,11 @@
 		"src"
 	],
 	"dependencies"    : {
-		"run-sequence"   : "^2.2.1",
-		"webtorrent-dht" : "^0.18.6"
+		"async-eventer" : "^1.1.6",
+		"es-dht"        : "^0.2.0"
 	},
 	"devDependencies" : {
-		"build-gbu" : "^0.1.0"
-	},
-	"jspm"            : {
-		"main" : "dist/detox-dht.browser.js"
+		"build-gbu"    : "^0.1.0",
+		"run-sequence" : "^2.2.1"
 	}
 }
