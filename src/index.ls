@@ -149,7 +149,9 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					if callback
 						callback(source_id, data)
 				case COMMAND_GET_STATE
-					void
+					state	= @_dht['get_state'](data)
+					if state
+						@_make_response(source_id, transaction_id, compose_get_state_response(state))
 				case COMMAND_GET_PROOF
 					[state_version, node_id]	= parse_get_proof_request(data)
 					@_make_response(source_id, transaction_id, @_dht['get_state_proof'](state_version, node_id))

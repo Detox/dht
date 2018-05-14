@@ -168,7 +168,7 @@
     }
     DHT.prototype = {
       'receive': function(source_id, command, payload){
-        var ref$, transaction_id, data, callback, state_version, node_id;
+        var ref$, transaction_id, data, callback, state, state_version, node_id;
         ref$ = parse_payload(payload), transaction_id = ref$[0], data = ref$[1];
         switch (command) {
         case COMMAND_RESPONSE:
@@ -178,6 +178,10 @@
           }
           break;
         case COMMAND_GET_STATE:
+          state = this._dht['get_state'](data);
+          if (state) {
+            this._make_response(source_id, transaction_id, compose_get_state_response(state));
+          }
           break;
         case COMMAND_GET_PROOF:
           ref$ = parse_get_proof_request(data), state_version = ref$[0], node_id = ref$[1];
