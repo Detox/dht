@@ -92,7 +92,9 @@
     return [version, value];
   }
   function Wrapper(detoxCrypto, detoxUtils, asyncEventer, esDht){
-    var are_arrays_equal, concat_arrays, timeoutSet;
+    var blake2b_256, verify_signature, are_arrays_equal, concat_arrays, timeoutSet;
+    blake2b_256 = detoxCrypto['blake2b_256'];
+    verify_signature = detoxCrypto['verify'];
     are_arrays_equal = detoxUtils['are_arrays_equal'];
     concat_arrays = detoxUtils['concat_arrays'];
     timeoutSet = detoxUtils['timeoutSet'];
@@ -192,8 +194,6 @@
      *
      * @param {!Uint8Array}		dht_public_key						Own ID (Ed25519 public key)
      * @param {!Array<!Object>}	bootstrap_nodes						Array of objects with keys (all of them are required) `node_id`, `host` and `port`
-     * @param {!Function}		hash_function						Hash function to be used for Merkle Tree
-     * @param {!Function}		verify_function						Function for verifying Ed25519 signatures, arguments are `Uint8Array`s `(signature, data, public_key)`
      * @param {number}			bucket_size							Size of a bucket from Kademlia design
      * @param {number}			state_history_size					How many versions of local history will be kept
      * @param {number}			values_cache_size					How many values will be kept in cache
@@ -201,16 +201,14 @@
      *
      * @return {!DHT}
      */
-    function DHT(dht_public_key, bootstrap_nodes, hash_function, verify_function, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer){
+    function DHT(dht_public_key, bootstrap_nodes, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer){
       var i$, len$, bootstrap_node;
       fraction_of_nodes_from_same_peer == null && (fraction_of_nodes_from_same_peer = 0.2);
       if (!(this instanceof DHT)) {
-        return new DHT(dht_public_key, bootstrap_nodes, hash_function, verify_function, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer);
+        return new DHT(dht_public_key, bootstrap_nodes, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer);
       }
       asyncEventer.call(this);
-      this._dht = esDht(dht_public_key, hash_function, bucket_size, state_history_size, fraction_of_nodes_from_same_peer);
-      this._hash = hash_function;
-      this._verify = verify_function;
+      this._dht = esDht(dht_public_key, blake2b_256, bucket_size, state_history_size, fraction_of_nodes_from_same_peer);
       this._transactions_counter = detoxUtils['random_int'](0, Math.pow(2, 16) - 1);
       this._transactions_in_progress = new Map;
       this._timeouts = new Set;
@@ -374,7 +372,7 @@
               if (stop) {
                 return;
               }
-              if (are_arrays_equal(this$._hash(data), key)) {
+              if (are_arrays_equal(blake2b_256(data), key)) {
                 stop = true;
                 resolve(data);
                 return;
@@ -403,7 +401,7 @@
         }
         payload = value.subarray(0, value.length - SIGNATURE_LENGTH);
         signature = value.subarray(value.length - SIGNATURE_LENGTH);
-        if (!this._verify(signature, payload, key)) {
+        if (!verify_signature(signature, payload, key)) {
           return null;
         }
         return parse_mutable_value(payload);
@@ -415,7 +413,7 @@
        */,
       'put_immutable': function(value){
         var key;
-        key = this._hash(value);
+        key = blake2b_256(value);
         this._values.add(key, value);
         return key;
       }

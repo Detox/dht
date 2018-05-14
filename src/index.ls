@@ -78,6 +78,8 @@ function parse_mutable_value (payload)
 	[version, value]
 
 function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
+	blake2b_256			= detox-crypto['blake2b_256']
+	verify_signature	= detox-crypto['verify']
 	are_arrays_equal	= detox-utils['are_arrays_equal']
 	concat_arrays		= detox-utils['concat_arrays']
 	timeoutSet			= detox-utils['timeoutSet']
@@ -158,8 +160,6 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 	 *
 	 * @param {!Uint8Array}		dht_public_key						Own ID (Ed25519 public key)
 	 * @param {!Array<!Object>}	bootstrap_nodes						Array of objects with keys (all of them are required) `node_id`, `host` and `port`
-	 * @param {!Function}		hash_function						Hash function to be used for Merkle Tree
-	 * @param {!Function}		verify_function						Function for verifying Ed25519 signatures, arguments are `Uint8Array`s `(signature, data, public_key)`
 	 * @param {number}			bucket_size							Size of a bucket from Kademlia design
 	 * @param {number}			state_history_size					How many versions of local history will be kept
 	 * @param {number}			values_cache_size					How many values will be kept in cache
@@ -167,14 +167,12 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 	 *
 	 * @return {!DHT}
 	 */
-	!function DHT (dht_public_key, bootstrap_nodes, hash_function, verify_function, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer = 0.2)
+	!function DHT (dht_public_key, bootstrap_nodes, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer = 0.2)
 		if !(@ instanceof DHT)
-			return new DHT(dht_public_key, bootstrap_nodes, hash_function, verify_function, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer)
+			return new DHT(dht_public_key, bootstrap_nodes, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer)
 		async-eventer.call(@)
 
-		@_dht						= es-dht(dht_public_key, hash_function, bucket_size, state_history_size, fraction_of_nodes_from_same_peer)
-		@_hash						= hash_function
-		@_verify					= verify_function
+		@_dht						= es-dht(dht_public_key, blake2b_256, bucket_size, state_history_size, fraction_of_nodes_from_same_peer)
 		# Start from random transaction number
 		@_transactions_counter		= detox-utils['random_int'](0, 2 ** 16 - 1)
 		@_transactions_in_progress	= new Map
@@ -299,7 +297,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 								if stop
 									return
 								# Immutable values can be returned immediately
-								if are_arrays_equal(@_hash(data), key)
+								if are_arrays_equal(blake2b_256(data), key)
 									stop	:= true
 									resolve(data)
 									return
@@ -322,7 +320,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 				return null
 			payload		= value.subarray(0, value.length - SIGNATURE_LENGTH)
 			signature	= value.subarray(value.length - SIGNATURE_LENGTH)
-			if !@_verify(signature, payload, key)
+			if !verify_signature(signature, payload, key)
 				return null
 			parse_mutable_value(payload)
 		/**
@@ -332,7 +330,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 */
 		'put_immutable' : (value) ->
 			# TODO: Configurable data size limit
-			key	= @_hash(value)
+			key	= blake2b_256(value)
 			@_values.add(key, value)
 			# TODO:
 			key
