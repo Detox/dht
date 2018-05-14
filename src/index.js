@@ -269,9 +269,9 @@
           break;
         case PUT_TIMEOUT:
           ref$ = parse_put_value_request(data), key = ref$[0], payload = ref$[1];
-          if (are_arrays_equal(blake2b_256(payload, key))) {
+          if (are_arrays_equal(blake2b_256(payload), key) || this._verify_mutable_value(key, payload)) {
             this._values.add(key, payload);
-          } else {}
+          }
         }
       }
       /**
@@ -375,7 +375,9 @@
         var value, this$ = this;
         value = this._values.get(key);
         if (value) {
-          return Promise.resolve(value);
+          return Promise.resolve(are_arrays_equal(blake2b_256(value), key)
+            ? value
+            : value.slice(4, value.length - SIGNATURE_LENGTH));
         }
         return this['lookup'](key).then(function(nodes){
           if (!nodes.length) {
@@ -446,22 +448,31 @@
        * @return {!Uint8Array} Key
        */,
       'put_immutable': function(value){
-        var key, this$ = this;
+        var key;
         key = blake2b_256(value);
         this._values.add(key, value);
+        this._put(key, value);
+        return key;
+      }
+      /**
+       * @param {!Uint8Array} key
+       * @param {!Uint8Array} payload
+       */,
+      _put: function(key, payload){
+        var this$ = this;
         this['lookup'](key).then(function(nodes){
-          var i$, len$, node_id, results$ = [];
+          var data, i$, len$, node_id, results$ = [];
           if (!nodes.length) {
             return;
           }
+          data = compose_put_value_request(key, payload);
           for (i$ = 0, len$ = nodes.length; i$ < len$; ++i$) {
             node_id = nodes[i$];
-            results$.push(this$._make_request(node_id, COMMAND_PUT_VALUE, compose_put_value_request(key, value), PUT_TIMEOUT)['catch'](fn$));
+            results$.push(this$._make_request(node_id, COMMAND_PUT_VALUE, data, PUT_TIMEOUT)['catch'](fn$));
           }
           return results$;
           function fn$(){}
         });
-        return key;
       }
       /**
        * @param {!Uint8Array}	public_key
@@ -469,7 +480,12 @@
        * @param {!Uint8Array}	value
        * @param {!Uint8Array}	signature
        */,
-      'put_mutable': function(public_key, version, value, signature){},
+      'put_mutable': function(public_key, version, value, signature){
+        var payload;
+        payload = concat_arrays([compose_mutable_value(version, value), signature]);
+        this._values.add(public_key, payload);
+        this._put(public_key, payload);
+      },
       'destroy': function(){
         this._destroyed = true;
         return this._timeouts.forEach(clearTimeout);

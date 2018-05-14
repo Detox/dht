@@ -221,10 +221,8 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					@_make_response(source_id, transaction_id, value || new Uint8Array(0))
 				case PUT_TIMEOUT
 					[key, payload]	= parse_put_value_request(data)
-					if are_arrays_equal(blake2b_256(payload, key))
+					if are_arrays_equal(blake2b_256(payload), key) || @_verify_mutable_value(key, payload)
 						@_values.add(key, payload)
-					else
-						# TODO
 		/**
 		 * @param {!Uint8Array}	seed			Seed used to generate bootstrap node's keys (it may be different from `dht_public_key` in constructor for scalability purposes
 		 * @param {string}		ip				IP on which to listen
@@ -303,7 +301,13 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		'get' : (key) ->
 			value	= @_values.get(key)
 			if value
-				return Promise.resolve(value)
+				return Promise.resolve(
+					if are_arrays_equal(blake2b_256(value), key)
+						value
+					else
+						# First 4 bytes are version and last bytes are signature
+						value.slice(4, value.length - SIGNATURE_LENGTH)
+				)
 			@'lookup'(key).then (nodes) ~>
 				if !nodes.length
 					return Promise.reject()
@@ -360,13 +364,20 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 			# TODO: Configurable data size limit
 			key	= blake2b_256(value)
 			@_values.add(key, value)
+			@_put(key, value)
+			key
+		/**
+		 * @param {!Uint8Array} key
+		 * @param {!Uint8Array} payload
+		 */
+		_put : (key, payload) !->
 			@'lookup'(key).then (nodes) ~>
 				if !nodes.length
 					return
+				data	= compose_put_value_request(key, payload)
 				for node_id in nodes
-					@_make_request(node_id, COMMAND_PUT_VALUE, compose_put_value_request(key, value), PUT_TIMEOUT)
+					@_make_request(node_id, COMMAND_PUT_VALUE, data, PUT_TIMEOUT)
 						.catch(->)
-			key
 		/**
 		 * @param {!Uint8Array}	public_key
 		 * @param {number}		version
@@ -374,7 +385,9 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 * @param {!Uint8Array}	signature
 		 */
 		'put_mutable' : (public_key, version, value, signature) !->
-			# TODO
+			payload	= concat_arrays([compose_mutable_value(version, value), signature])
+			@_values.add(public_key, payload)
+			@_put(public_key, payload)
 		'destroy' : ->
 			# TODO: Check this property in relevant places
 			@_destroyed	= true
