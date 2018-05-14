@@ -7,7 +7,6 @@ const ID_LENGTH							= 32
 const COMMAND_RESPONSE					= 0
 const COMMAND_GET_STATE					= 1
 const COMMAND_GET_PROOF					= 2
-const COMMAND_MAKE_CONNECTION			= 3
 # Would be nice to make these configurable on instance level
 const GET_PROOF_REQUEST_TIMEOUT			= 5
 const MAKE_CONNECTION_REQUEST_TIMEOUT	= 10
@@ -31,25 +30,6 @@ function parse_get_proof_request (data)
 	state_version	= data.subarray(0, ID_LENGTH)
 	node_id			= data.subarray(ID_LENGTH)
 	[state_version, node_id]
-/**
- * @param {!Uint8Array} node_id
- * @param {!Uint8Array} connection_details
- *
- * @return {!Uint8Array}
- */
-function compose_make_connection_request (node_id, connection_details)
-	new Uint8Array(ID_LENGTH * 2)
-		..set(node_id)
-		..set(connection_details, ID_LENGTH)
-/**
- * @param {!Uint8Array} data
- *
- * @return {!Array<!Uint8Array>} `[node_id, connection_details]`
- */
-function parse_make_connection_request (data)
-	node_id				= data.subarray(0, ID_LENGTH)
-	connection_details	= data.subarray(ID_LENGTH)
-	[node_id, connection_details]
 /**
  * @param {number}		transaction_id
  * @param {!Uint8Array}	data
@@ -155,8 +135,6 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 				case COMMAND_GET_PROOF
 					[state_version, node_id]	= parse_get_proof_request(data)
 					@_make_response(source_id, transaction_id, @_dht['get_state_proof'](state_version, node_id))
-				case COMMAND_MAKE_CONNECTION
-					void
 		/**
 		 * @param {!Uint8Array}	seed			Seed used to generate bootstrap node's keys (it may be different from `dht_public_key` in constructor for scalability purposes
 		 * @param {string}		ip				IP on which to listen
@@ -200,40 +178,28 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 						.then (proof) !~>
 							target_node_state_version	= @_dht['check_state_proof'](parent_state_version, parent_node_id, proof, target_node_id)
 							if target_node_state_version
-								@_initiate_p2p_connection()
-									.then (local_connection_details) ~>
-										@_make_request(parent_node_id, COMMAND_MAKE_CONNECTION, compose_make_connection_request(target_node_id, local_connection_details), MAKE_CONNECTION_REQUEST_TIMEOUT)
-											.then (remote_connection_details) ~>
-												@_establish_p2p_connection(local_connection_details, remote_connection_details)
-									.then ~>
-										@_make_request(target_node_id, COMMAND_GET_STATE, target_node_state_version, GET_STATE_REQUEST_TIMEOUT)
-											.then(parse_get_state_response)
-											.then ([state_version, proof, peers]) !~>
-												if @_dht['check_state_proof'](state_version, target_node_id, proof, target_node_id)
-													nodes_for_next_round	:= nodes_for_next_round.concat(
-														@_dht['update_lookup'](id, target_node_id, target_node_state_version, peers)
-													)
-												done()
+								@_connect_to(target_node_id, parent_node_id).then ~>
+									@_make_request(target_node_id, COMMAND_GET_STATE, target_node_state_version, GET_STATE_REQUEST_TIMEOUT)
+										.then(parse_get_state_response)
+										.then ([state_version, proof, peers]) !~>
+											if @_dht['check_state_proof'](state_version, target_node_id, proof, target_node_id)
+												nodes_for_next_round	:= nodes_for_next_round.concat(
+													@_dht['update_lookup'](id, target_node_id, target_node_state_version, peers)
+												)
+											done()
 							else
 								# TODO: Drop connection on bad proof (also take into account timeouts, since peer may just refuse to answer)
 								done()
 						.catch !->
 							done()
 		/**
-		 * @return {!Promise} Resolves with `local_connection_details`
-		 */
-		_initiate_p2p_connection : ->
-			data	= {'connection_details' : null}
-			@'fire'('initiate_connection', data)
-				.then ->
-					if !data['connection_details']
-						throw ''
-					data['connection_details']
-		/**
+		 * @param {!Uint8Array}	peer_peer_id	Peer's peer ID
+		 * @param {!Uint8Array}	peer_id			Peer ID
+		 *
 		 * @return {!Promise}
 		 */
-		_establish_p2p_connection : (local_connection_details, remote_connection_details) ->
-			@'fire'('establish_connection', local_connection_details, remote_connection_details)
+		_connect_to : (peer_peer_id, peer_id) ->
+			@'fire'('connect_to', peer_peer_id, peer_id)
 		/**
 		 * @return {!Array<!Uint8Array>}
 		 */

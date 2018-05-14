@@ -5,12 +5,11 @@
  * @license 0BSD
  */
 (function(){
-  var ID_LENGTH, COMMAND_RESPONSE, COMMAND_GET_STATE, COMMAND_GET_PROOF, COMMAND_MAKE_CONNECTION, GET_PROOF_REQUEST_TIMEOUT, MAKE_CONNECTION_REQUEST_TIMEOUT, GET_STATE_REQUEST_TIMEOUT;
+  var ID_LENGTH, COMMAND_RESPONSE, COMMAND_GET_STATE, COMMAND_GET_PROOF, GET_PROOF_REQUEST_TIMEOUT, MAKE_CONNECTION_REQUEST_TIMEOUT, GET_STATE_REQUEST_TIMEOUT;
   ID_LENGTH = 32;
   COMMAND_RESPONSE = 0;
   COMMAND_GET_STATE = 1;
   COMMAND_GET_PROOF = 2;
-  COMMAND_MAKE_CONNECTION = 3;
   GET_PROOF_REQUEST_TIMEOUT = 5;
   MAKE_CONNECTION_REQUEST_TIMEOUT = 10;
   GET_STATE_REQUEST_TIMEOUT = 5;
@@ -37,30 +36,6 @@
     state_version = data.subarray(0, ID_LENGTH);
     node_id = data.subarray(ID_LENGTH);
     return [state_version, node_id];
-  }
-  /**
-   * @param {!Uint8Array} node_id
-   * @param {!Uint8Array} connection_details
-   *
-   * @return {!Uint8Array}
-   */
-  function compose_make_connection_request(node_id, connection_details){
-    var x$;
-    x$ = new Uint8Array(ID_LENGTH * 2);
-    x$.set(node_id);
-    x$.set(connection_details, ID_LENGTH);
-    return x$;
-  }
-  /**
-   * @param {!Uint8Array} data
-   *
-   * @return {!Array<!Uint8Array>} `[node_id, connection_details]`
-   */
-  function parse_make_connection_request(data){
-    var node_id, connection_details;
-    node_id = data.subarray(0, ID_LENGTH);
-    connection_details = data.subarray(ID_LENGTH);
-    return [node_id, connection_details];
   }
   /**
    * @param {number}		transaction_id
@@ -186,8 +161,6 @@
         case COMMAND_GET_PROOF:
           ref$ = parse_get_proof_request(data), state_version = ref$[0], node_id = ref$[1];
           this._make_response(source_id, transaction_id, this._dht['get_state_proof'](state_version, node_id));
-          break;
-        case COMMAND_MAKE_CONNECTION:
         }
       }
       /**
@@ -248,11 +221,7 @@
               var target_node_state_version;
               target_node_state_version = this$._dht['check_state_proof'](parent_state_version, parent_node_id, proof, target_node_id);
               if (target_node_state_version) {
-                this$._initiate_p2p_connection().then(function(local_connection_details){
-                  return this$._make_request(parent_node_id, COMMAND_MAKE_CONNECTION, compose_make_connection_request(target_node_id, local_connection_details), MAKE_CONNECTION_REQUEST_TIMEOUT).then(function(remote_connection_details){
-                    return this$._establish_p2p_connection(local_connection_details, remote_connection_details);
-                  });
-                }).then(function(){
+                this$._connect_to(target_node_id, parent_node_id).then(function(){
                   return this$._make_request(target_node_id, COMMAND_GET_STATE, target_node_state_version, GET_STATE_REQUEST_TIMEOUT).then(parse_get_state_response).then(function(arg$){
                     var state_version, proof, peers;
                     state_version = arg$[0], proof = arg$[1], peers = arg$[2];
@@ -272,25 +241,13 @@
         });
       }
       /**
-       * @return {!Promise} Resolves with `local_connection_details`
-       */,
-      _initiate_p2p_connection: function(){
-        var data;
-        data = {
-          'connection_details': null
-        };
-        return this['fire']('initiate_connection', data).then(function(){
-          if (!data['connection_details']) {
-            throw '';
-          }
-          return data['connection_details'];
-        });
-      }
-      /**
+       * @param {!Uint8Array}	peer_peer_id	Peer's peer ID
+       * @param {!Uint8Array}	peer_id			Peer ID
+       *
        * @return {!Promise}
        */,
-      _establish_p2p_connection: function(local_connection_details, remote_connection_details){
-        return this['fire']('establish_connection', local_connection_details, remote_connection_details);
+      _connect_to: function(peer_peer_id, peer_id){
+        return this['fire']('connect_to', peer_peer_id, peer_id);
       }
       /**
        * @return {!Array<!Uint8Array>}
