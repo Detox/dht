@@ -20,6 +20,7 @@
 	],
 	"dependencies"    : {
 		"@detox/crypto" : "^0.7.1",
+		"@detox/utils"  : "^1.9.0",
 		"async-eventer" : "^1.1.6",
 		"es-dht"        : "^0.2.0"
 	},
