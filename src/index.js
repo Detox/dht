@@ -5,17 +5,18 @@
  * @license 0BSD
  */
 (function(){
-  var ID_LENGTH, SIGNATURE_LENGTH, COMMAND_RESPONSE, COMMAND_GET_STATE, COMMAND_GET_PROOF, COMMAND_GET_VALUE, GET_PROOF_REQUEST_TIMEOUT, MAKE_CONNECTION_REQUEST_TIMEOUT, GET_STATE_REQUEST_TIMEOUT, GET_TIMEOUT;
+  var ID_LENGTH, SIGNATURE_LENGTH, COMMAND_RESPONSE, COMMAND_GET_STATE, COMMAND_GET_PROOF, COMMAND_GET_VALUE, COMMAND_PUT_VALUE, GET_PROOF_REQUEST_TIMEOUT, GET_STATE_REQUEST_TIMEOUT, GET_VALUE_TIMEOUT, PUT_VALUE_TIMEOUT;
   ID_LENGTH = 32;
   SIGNATURE_LENGTH = 64;
   COMMAND_RESPONSE = 0;
   COMMAND_GET_STATE = 1;
   COMMAND_GET_PROOF = 2;
   COMMAND_GET_VALUE = 3;
+  COMMAND_PUT_VALUE = 4;
   GET_PROOF_REQUEST_TIMEOUT = 5;
-  MAKE_CONNECTION_REQUEST_TIMEOUT = 10;
   GET_STATE_REQUEST_TIMEOUT = 5;
-  GET_TIMEOUT = 5;
+  GET_VALUE_TIMEOUT = 5;
+  PUT_VALUE_TIMEOUT = 5;
   /**
    * @param {!Uint8Array} state_version
    * @param {!Uint8Array} node_id
@@ -268,7 +269,7 @@
           value = this._values.get(data);
           this._make_response(source_id, transaction_id, value || new Uint8Array(0));
           break;
-        case PUT_TIMEOUT:
+        case COMMAND_PUT_VALUE:
           ref$ = parse_put_value_request(data), key = ref$[0], payload = ref$[1];
           if (are_arrays_equal(blake2b_256(payload), key) || this._verify_mutable_value(key, payload)) {
             this._values.add(key, payload);
@@ -402,7 +403,7 @@
             }
             for (i$ = 0, len$ = (ref$ = nodes).length; i$ < len$; ++i$) {
               node_id = ref$[i$];
-              this$._make_request(node_id, COMMAND_GET_VALUE, key, GET_TIMEOUT).then(fn$)['catch'](done);
+              this$._make_request(node_id, COMMAND_GET_VALUE, key, GET_VALUE_TIMEOUT).then(fn$)['catch'](done);
             }
             function fn$(data){
               var payload;
@@ -469,7 +470,7 @@
           data = compose_put_value_request(key, payload);
           for (i$ = 0, len$ = nodes.length; i$ < len$; ++i$) {
             node_id = nodes[i$];
-            results$.push(this$._make_request(node_id, COMMAND_PUT_VALUE, data, PUT_TIMEOUT)['catch'](fn$));
+            results$.push(this$._make_request(node_id, COMMAND_PUT_VALUE, data, PUT_VALUE_TIMEOUT)['catch'](fn$));
           }
           return results$;
           function fn$(){}

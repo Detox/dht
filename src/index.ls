@@ -9,11 +9,12 @@ const COMMAND_RESPONSE					= 0
 const COMMAND_GET_STATE					= 1
 const COMMAND_GET_PROOF					= 2
 const COMMAND_GET_VALUE					= 3
+const COMMAND_PUT_VALUE					= 4
 # Would be nice to make these configurable on instance level
 const GET_PROOF_REQUEST_TIMEOUT			= 5
-const MAKE_CONNECTION_REQUEST_TIMEOUT	= 10
 const GET_STATE_REQUEST_TIMEOUT			= 5
-const GET_TIMEOUT						= 5
+const GET_VALUE_TIMEOUT					= 5
+const PUT_VALUE_TIMEOUT					= 5
 /**
  * @param {!Uint8Array} state_version
  * @param {!Uint8Array} node_id
@@ -220,7 +221,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 				case COMMAND_GET_VALUE
 					value	= @_values.get(data)
 					@_make_response(source_id, transaction_id, value || new Uint8Array(0))
-				case PUT_TIMEOUT
+				case COMMAND_PUT_VALUE
 					[key, payload]	= parse_put_value_request(data)
 					if are_arrays_equal(blake2b_256(payload), key) || @_verify_mutable_value(key, payload)
 						@_values.add(key, payload)
@@ -325,7 +326,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 						else
 							resolve(found[1])
 					for node_id in nodes
-						@_make_request(node_id, COMMAND_GET_VALUE, key, GET_TIMEOUT)
+						@_make_request(node_id, COMMAND_GET_VALUE, key, GET_VALUE_TIMEOUT)
 							.then (data) !~>
 								if stop
 									return
@@ -377,7 +378,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					return
 				data	= compose_put_value_request(key, payload)
 				for node_id in nodes
-					@_make_request(node_id, COMMAND_PUT_VALUE, data, PUT_TIMEOUT)
+					@_make_request(node_id, COMMAND_PUT_VALUE, data, PUT_VALUE_TIMEOUT)
 						.catch(->)
 		/**
 		 * @param {!Uint8Array}	public_key	Ed25519 public key, will be used as key for data
