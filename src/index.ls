@@ -8,6 +8,7 @@ const SIGNATURE_LENGTH					= 64
 const COMMAND_RESPONSE					= 0
 const COMMAND_GET_STATE					= 1
 const COMMAND_GET_PROOF					= 2
+const COMMAND_GET_VALUE					= 3
 # Would be nice to make these configurable on instance level
 const GET_PROOF_REQUEST_TIMEOUT			= 5
 const MAKE_CONNECTION_REQUEST_TIMEOUT	= 10
@@ -196,7 +197,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 				case COMMAND_GET_PROOF
 					[state_version, node_id]	= parse_get_proof_request(data)
 					@_make_response(source_id, transaction_id, @_dht['get_state_proof'](state_version, node_id))
-				case COMMAND_GET
+				case COMMAND_GET_VALUE
 					value	= @_values.get(data)
 					@_make_response(source_id, transaction_id, value || new Uint8Array(0))
 		/**
@@ -292,7 +293,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 						else
 							resolve(found[1])
 					for node_id in nodes
-						@_make_request(node_id, COMMAND_GET, key, GET_TIMEOUT)
+						@_make_request(node_id, COMMAND_GET_VALUE, key, GET_TIMEOUT)
 							.then (data) !~>
 								if stop
 									return

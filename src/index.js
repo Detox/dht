@@ -5,12 +5,13 @@
  * @license 0BSD
  */
 (function(){
-  var ID_LENGTH, SIGNATURE_LENGTH, COMMAND_RESPONSE, COMMAND_GET_STATE, COMMAND_GET_PROOF, GET_PROOF_REQUEST_TIMEOUT, MAKE_CONNECTION_REQUEST_TIMEOUT, GET_STATE_REQUEST_TIMEOUT, GET_TIMEOUT;
+  var ID_LENGTH, SIGNATURE_LENGTH, COMMAND_RESPONSE, COMMAND_GET_STATE, COMMAND_GET_PROOF, COMMAND_GET_VALUE, GET_PROOF_REQUEST_TIMEOUT, MAKE_CONNECTION_REQUEST_TIMEOUT, GET_STATE_REQUEST_TIMEOUT, GET_TIMEOUT;
   ID_LENGTH = 32;
   SIGNATURE_LENGTH = 64;
   COMMAND_RESPONSE = 0;
   COMMAND_GET_STATE = 1;
   COMMAND_GET_PROOF = 2;
+  COMMAND_GET_VALUE = 3;
   GET_PROOF_REQUEST_TIMEOUT = 5;
   MAKE_CONNECTION_REQUEST_TIMEOUT = 10;
   GET_STATE_REQUEST_TIMEOUT = 5;
@@ -238,7 +239,7 @@
           ref$ = parse_get_proof_request(data), state_version = ref$[0], node_id = ref$[1];
           this._make_response(source_id, transaction_id, this._dht['get_state_proof'](state_version, node_id));
           break;
-        case COMMAND_GET:
+        case COMMAND_GET_VALUE:
           value = this._values.get(data);
           this._make_response(source_id, transaction_id, value || new Uint8Array(0));
         }
@@ -365,7 +366,7 @@
             }
             for (i$ = 0, len$ = (ref$ = nodes).length; i$ < len$; ++i$) {
               node_id = ref$[i$];
-              this$._make_request(node_id, COMMAND_GET, key, GET_TIMEOUT).then(fn$)['catch'](done);
+              this$._make_request(node_id, COMMAND_GET_VALUE, key, GET_TIMEOUT).then(fn$)['catch'](done);
             }
             function fn$(data){
               var payload;
