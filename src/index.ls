@@ -4,6 +4,7 @@
  * @license 0BSD
  */
 const ID_LENGTH							= 32
+const SIGNATURE_LENGTH					= 64
 const COMMAND_RESPONSE					= 0
 const COMMAND_GET_STATE					= 1
 const COMMAND_GET_PROOF					= 2
@@ -53,6 +54,28 @@ function parse_payload (payload)
 	transaction_id	= view.getUint16(0, false)
 	data			= payload.subarray(2)
 	[transaction_id, data]
+/**
+ * @param {number}		version
+ * @param {!Uint8Array}	data
+ *
+ * @return {!Uint8Array}
+ */
+function compose_mutable_value (version, value)
+	array	= new Uint8Array(4 + value.length)
+		..set(value, 4)
+	new DataView(array.buffer)
+		..setUint32(0, version, false)
+	array
+/**
+ * @param {!Uint8Array} payload
+ *
+ * @return {!Array<!Uint8Array>} `[version, value]`
+ */
+function parse_mutable_value (payload)
+	view	= new DataView(payload.buffer, payload.byteOffset, payload.byteLength)
+	version	= view.getUint32(0, false)
+	value	= payload.subarray(4)
+	[version, value]
 
 function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 	are_arrays_equal	= detox-utils['are_arrays_equal']
@@ -136,7 +159,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 	 * @param {!Uint8Array}		dht_public_key						Own ID (Ed25519 public key)
 	 * @param {!Array<!Object>}	bootstrap_nodes						Array of objects with keys (all of them are required) `node_id`, `host` and `port`
 	 * @param {!Function}		hash_function						Hash function to be used for Merkle Tree
-	 * @param {!Function}		verify_function						Function for verifying Ed25519 signatures, arguments are `Uint8Array`s `(signature, data. public_key)`
+	 * @param {!Function}		verify_function						Function for verifying Ed25519 signatures, arguments are `Uint8Array`s `(signature, data, public_key)`
 	 * @param {number}			bucket_size							Size of a bucket from Kademlia design
 	 * @param {number}			state_history_size					How many versions of local history will be kept
 	 * @param {number}			values_cache_size					How many values will be kept in cache
@@ -175,6 +198,9 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 				case COMMAND_GET_PROOF
 					[state_version, node_id]	= parse_get_proof_request(data)
 					@_make_response(source_id, transaction_id, @_dht['get_state_proof'](state_version, node_id))
+				case COMMAND_GET
+					value	= @_values.get(data)
+					@_make_response(source_id, transaction_id, value || new Uint8Array(0))
 		/**
 		 * @param {!Uint8Array}	seed			Seed used to generate bootstrap node's keys (it may be different from `dht_public_key` in constructor for scalability purposes
 		 * @param {string}		ip				IP on which to listen
@@ -269,46 +295,54 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 							resolve(found[1])
 					for node_id in nodes
 						@_make_request(node_id, COMMAND_GET, key, GET_TIMEOUT)
-							.then (value) !~>
+							.then (data) !~>
 								if stop
 									return
 								# Immutable values can be returned immediately
-								if are_arrays_equal(@_hash(value), key)
+								if are_arrays_equal(@_hash(data), key)
 									stop	:= true
-									resolve(value)
+									resolve(data)
 									return
 								# Mutable values will have version, so we wait and pick value with higher version
-								version	= @_verify_data(key, value)
-								if version
-									if !found || found[0] < version
-										found	:= [version, value]
+								payload	= @_verify_mutable_value(key, data)
+								if payload
+									if !found || found[0] < payload[0]
+										found	:= payload
 								done()
 							.catch(done)
 		/**
 		 * @param {!Uint8Array} key
-		 * @param {!Uint8Array} value
-		 *
-		 * @return {number} Version
-		 */
-		_verify_data : (key, value) ->
-			# TODO
-		/**
 		 * @param {!Uint8Array} data
+		 *
+		 * @return {Array} `[version, value]` if signature is correct or `null` otherwise
+		 */
+		_verify_mutable_value : (key, data) ->
+			# Version is 4 bytes, so there should be at least 1 byte of useful payload
+			if value.length < (SIGNATURE_LENGTH + 5)
+				return null
+			payload		= value.subarray(0, value.length - SIGNATURE_LENGTH)
+			signature	= value.subarray(value.length - SIGNATURE_LENGTH)
+			if !@_verify(signature, payload, key)
+				return null
+			parse_mutable_value(payload)
+		/**
+		 * @param {!Uint8Array} value
 		 *
 		 * @return {!Uint8Array} Key
 		 */
-		'put_immutable' : (data) ->
+		'put_immutable' : (value) ->
 			# TODO: Configurable data size limit
-			key	= @_hash(data)
+			key	= @_hash(value)
 			@_values.add(key, value)
 			# TODO:
 			key
 		/**
-		 * @param {!Uint8Array} public_key
-		 * @param {!Uint8Array} data
-		 * @param {!Uint8Array} signature
+		 * @param {!Uint8Array}	public_key
+		 * @param {number}		version
+		 * @param {!Uint8Array}	value
+		 * @param {!Uint8Array}	signature
 		 */
-		'put_mutable' : (public_key, data, signature) !->
+		'put_mutable' : (public_key, version, value, signature) !->
 			# TODO
 		'destroy' : ->
 			# TODO: Check this property in relevant places

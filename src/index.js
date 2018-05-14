@@ -5,8 +5,9 @@
  * @license 0BSD
  */
 (function(){
-  var ID_LENGTH, COMMAND_RESPONSE, COMMAND_GET_STATE, COMMAND_GET_PROOF, GET_PROOF_REQUEST_TIMEOUT, MAKE_CONNECTION_REQUEST_TIMEOUT, GET_STATE_REQUEST_TIMEOUT, GET_TIMEOUT;
+  var ID_LENGTH, SIGNATURE_LENGTH, COMMAND_RESPONSE, COMMAND_GET_STATE, COMMAND_GET_PROOF, GET_PROOF_REQUEST_TIMEOUT, MAKE_CONNECTION_REQUEST_TIMEOUT, GET_STATE_REQUEST_TIMEOUT, GET_TIMEOUT;
   ID_LENGTH = 32;
+  SIGNATURE_LENGTH = 64;
   COMMAND_RESPONSE = 0;
   COMMAND_GET_STATE = 1;
   COMMAND_GET_PROOF = 2;
@@ -63,6 +64,32 @@
     transaction_id = view.getUint16(0, false);
     data = payload.subarray(2);
     return [transaction_id, data];
+  }
+  /**
+   * @param {number}		version
+   * @param {!Uint8Array}	data
+   *
+   * @return {!Uint8Array}
+   */
+  function compose_mutable_value(version, value){
+    var x$, array, y$;
+    x$ = array = new Uint8Array(4 + value.length);
+    x$.set(value, 4);
+    y$ = new DataView(array.buffer);
+    y$.setUint32(0, version, false);
+    return array;
+  }
+  /**
+   * @param {!Uint8Array} payload
+   *
+   * @return {!Array<!Uint8Array>} `[version, value]`
+   */
+  function parse_mutable_value(payload){
+    var view, version, value;
+    view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    version = view.getUint32(0, false);
+    value = payload.subarray(4);
+    return [version, value];
   }
   function Wrapper(detoxCrypto, detoxUtils, asyncEventer, esDht){
     var are_arrays_equal, concat_arrays, timeoutSet;
@@ -166,7 +193,7 @@
      * @param {!Uint8Array}		dht_public_key						Own ID (Ed25519 public key)
      * @param {!Array<!Object>}	bootstrap_nodes						Array of objects with keys (all of them are required) `node_id`, `host` and `port`
      * @param {!Function}		hash_function						Hash function to be used for Merkle Tree
-     * @param {!Function}		verify_function						Function for verifying Ed25519 signatures, arguments are `Uint8Array`s `(signature, data. public_key)`
+     * @param {!Function}		verify_function						Function for verifying Ed25519 signatures, arguments are `Uint8Array`s `(signature, data, public_key)`
      * @param {number}			bucket_size							Size of a bucket from Kademlia design
      * @param {number}			state_history_size					How many versions of local history will be kept
      * @param {number}			values_cache_size					How many values will be kept in cache
@@ -194,7 +221,7 @@
     }
     DHT.prototype = {
       'receive': function(source_id, command, payload){
-        var ref$, transaction_id, data, callback, state, state_version, node_id;
+        var ref$, transaction_id, data, callback, state, state_version, node_id, value;
         ref$ = parse_payload(payload), transaction_id = ref$[0], data = ref$[1];
         switch (command) {
         case COMMAND_RESPONSE:
@@ -212,6 +239,10 @@
         case COMMAND_GET_PROOF:
           ref$ = parse_get_proof_request(data), state_version = ref$[0], node_id = ref$[1];
           this._make_response(source_id, transaction_id, this._dht['get_state_proof'](state_version, node_id));
+          break;
+        case COMMAND_GET:
+          value = this._values.get(data);
+          this._make_response(source_id, transaction_id, value || new Uint8Array(0));
         }
       }
       /**
@@ -338,20 +369,20 @@
               node_id = ref$[i$];
               this$._make_request(node_id, COMMAND_GET, key, GET_TIMEOUT).then(fn$)['catch'](done);
             }
-            function fn$(value){
-              var version;
+            function fn$(data){
+              var payload;
               if (stop) {
                 return;
               }
-              if (are_arrays_equal(this$._hash(value), key)) {
+              if (are_arrays_equal(this$._hash(data), key)) {
                 stop = true;
-                resolve(value);
+                resolve(data);
                 return;
               }
-              version = this$._verify_data(key, value);
-              if (version) {
-                if (!found || found[0] < version) {
-                  found = [version, value];
+              payload = this$._verify_mutable_value(key, data);
+              if (payload) {
+                if (!found || found[0] < payload[0]) {
+                  found = payload;
                 }
               }
               done();
@@ -361,28 +392,40 @@
       }
       /**
        * @param {!Uint8Array} key
-       * @param {!Uint8Array} value
-       *
-       * @return {number} Version
-       */,
-      _verify_data: function(key, value){}
-      /**
        * @param {!Uint8Array} data
+       *
+       * @return {Array} `[version, value]` if signature is correct or `null` otherwise
+       */,
+      _verify_mutable_value: function(key, data){
+        var payload, signature;
+        if (value.length < SIGNATURE_LENGTH + 5) {
+          return null;
+        }
+        payload = value.subarray(0, value.length - SIGNATURE_LENGTH);
+        signature = value.subarray(value.length - SIGNATURE_LENGTH);
+        if (!this._verify(signature, payload, key)) {
+          return null;
+        }
+        return parse_mutable_value(payload);
+      }
+      /**
+       * @param {!Uint8Array} value
        *
        * @return {!Uint8Array} Key
        */,
-      'put_immutable': function(data){
+      'put_immutable': function(value){
         var key;
-        key = this._hash(data);
+        key = this._hash(value);
         this._values.add(key, value);
         return key;
       }
       /**
-       * @param {!Uint8Array} public_key
-       * @param {!Uint8Array} data
-       * @param {!Uint8Array} signature
+       * @param {!Uint8Array}	public_key
+       * @param {number}		version
+       * @param {!Uint8Array}	value
+       * @param {!Uint8Array}	signature
        */,
-      'put_mutable': function(public_key, data, signature){},
+      'put_mutable': function(public_key, version, value, signature){},
       'destroy': function(){
         this._destroyed = true;
         return this._timeouts.forEach(clearTimeout);
