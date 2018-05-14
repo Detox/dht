@@ -256,6 +256,9 @@
           }
           break;
         case COMMAND_GET_STATE:
+          if (!data.length) {
+            data = null;
+          }
           state = this._dht['get_state'](data);
           if (state) {
             this._make_response(source_id, transaction_id, compose_get_state_response(state));

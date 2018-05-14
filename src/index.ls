@@ -212,6 +212,9 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					if callback
 						callback(source_id, data)
 				case COMMAND_GET_STATE
+					# Support for getting latest state version with empty state version request
+					if !data.length
+						data	= null
 					state	= @_dht['get_state'](data)
 					if state
 						@_make_response(source_id, transaction_id, compose_get_state_response(state))
