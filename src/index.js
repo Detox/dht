@@ -10,7 +10,7 @@
      * @constructor
      *
      * @param {!Uint8Array}		dht_public_key						Own ID
-     * @param {!Array<!Object>}	bootstrap_nodes						Array of objects with keys (all of them are required) `node_id`, `host` and `ip`
+     * @param {!Array<!Object>}	bootstrap_nodes						Array of objects with keys (all of them are required) `node_id`, `host` and `port`
      * @param {!Function}		hash_function						Hash function to be used for Merkle Tree
      * @param {!Function}		verify								Function for verifying Ed25519 signatures, arguments are `Uint8Array`s `(signature, data. public_key)`
      * @param {number}			bucket_size							Size of a bucket from Kademlia design

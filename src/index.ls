@@ -8,7 +8,7 @@ function Wrapper (detox-crypto, async-eventer, es-dht)
 	 * @constructor
 	 *
 	 * @param {!Uint8Array}		dht_public_key						Own ID
-	 * @param {!Array<!Object>}	bootstrap_nodes						Array of objects with keys (all of them are required) `node_id`, `host` and `ip`
+	 * @param {!Array<!Object>}	bootstrap_nodes						Array of objects with keys (all of them are required) `node_id`, `host` and `port`
 	 * @param {!Function}		hash_function						Hash function to be used for Merkle Tree
 	 * @param {!Function}		verify								Function for verifying Ed25519 signatures, arguments are `Uint8Array`s `(signature, data. public_key)`
 	 * @param {number}			bucket_size							Size of a bucket from Kademlia design
@@ -17,7 +17,6 @@ function Wrapper (detox-crypto, async-eventer, es-dht)
 	 *
 	 * @return {!DHT}
 	 */
-#	!function DHT (dht_public_key, bootstrap_nodes)
 	!function DHT (dht_public_key, bootstrap_nodes, hash_function, verify, bucket_size, state_history_size, fraction_of_nodes_from_same_peer = 0.2)
 		if !(@ instanceof DHT)
 			return new DHT(dht_public_key, bootstrap_nodes, hash_function, verify, bucket_size, state_history_size, fraction_of_nodes_from_same_peer)
