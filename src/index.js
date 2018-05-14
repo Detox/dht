@@ -5,34 +5,38 @@
  * @license 0BSD
  */
 (function(){
-  var ID_LENGTH, GET_PROOF_REQUEST_TIMEOUT, MAKE_CONNECTION_REQUEST_TIMEOUT, GET_STATE_REQUEST_TIMEOUT;
+  var ID_LENGTH, COMMAND_RESPONSE, COMMAND_GET_STATE, COMMAND_GET_PROOF, COMMAND_MAKE_CONNECTION, GET_PROOF_REQUEST_TIMEOUT, MAKE_CONNECTION_REQUEST_TIMEOUT, GET_STATE_REQUEST_TIMEOUT;
   ID_LENGTH = 32;
+  COMMAND_RESPONSE = 0;
+  COMMAND_GET_STATE = 1;
+  COMMAND_GET_PROOF = 2;
+  COMMAND_MAKE_CONNECTION = 3;
   GET_PROOF_REQUEST_TIMEOUT = 5;
   MAKE_CONNECTION_REQUEST_TIMEOUT = 10;
   GET_STATE_REQUEST_TIMEOUT = 5;
   /**
-   * @param {!Uint8Array} node_id
    * @param {!Uint8Array} state_version
+   * @param {!Uint8Array} node_id
    *
    * @return {!Uint8Array}
    */
-  function compose_get_proof_request(node_id, state_version){
+  function compose_get_proof_request(state_version, node_id){
     var x$;
     x$ = new Uint8Array(ID_LENGTH * 2);
-    x$.set(node_id);
-    x$.set(state_version, ID_LENGTH);
+    x$.set(node_id, ID_LENGTH);
+    x$.set(state_version);
     return x$;
   }
   /**
    * @param {!Uint8Array} data
    *
-   * @return {!Array<!Uint8Array>} `[node_id, state_version]`
+   * @return {!Array<!Uint8Array>} `[state_version, node_id]`
    */
   function parse_get_proof_request(data){
-    var node_id, state_version;
-    node_id = data.subarray(0, ID_LENGTH);
-    state_version = data.subarray(ID_LENGTH);
-    return [node_id, state_version];
+    var state_version, node_id;
+    state_version = data.subarray(0, ID_LENGTH);
+    node_id = data.subarray(ID_LENGTH);
+    return [state_version, node_id];
   }
   /**
    * @param {!Uint8Array} node_id
@@ -58,8 +62,35 @@
     connection_details = data.subarray(ID_LENGTH);
     return [node_id, connection_details];
   }
+  /**
+   * @param {number}		transaction_id
+   * @param {!Uint8Array}	data
+   *
+   * @return {!Uint8Array}
+   */
+  function compose_payload(transaction_id, data){
+    var x$, array, y$;
+    x$ = array = new Uint8Array(2 + data.length);
+    x$.set(data, 2);
+    y$ = new DataView(array.buffer);
+    y$.setUint16(0, transaction_id, false);
+    return array;
+  }
+  /**
+   * @param {!Uint8Array} payload
+   *
+   * @return {!Array<!Uint8Array>} `[transaction_id, data]`
+   */
+  function parse_payload(payload){
+    var view, transaction_id, data;
+    view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    transaction_id = view.getUint16(0, false);
+    data = payload.subarray(2);
+    return [transaction_id, data];
+  }
   function Wrapper(detoxCrypto, detoxUtils, asyncEventer, esDht){
-    var concat_arrays, timeoutSet;
+    var are_arrays_equal, concat_arrays, timeoutSet;
+    are_arrays_equal = detoxUtils['are_arrays_equal'];
     concat_arrays = detoxUtils['concat_arrays'];
     timeoutSet = detoxUtils['timeoutSet'];
     /**
@@ -136,8 +167,25 @@
       }
     }
     DHT.prototype = {
-      'handle_request': function(source_id, transaction_id, command, data){},
-      'handle_response': function(source_id, transaction_id, data){}
+      'receive': function(source_id, command, payload){
+        var ref$, transaction_id, data, callback, state_version, node_id;
+        ref$ = parse_payload(payload), transaction_id = ref$[0], data = ref$[1];
+        switch (command) {
+        case COMMAND_RESPONSE:
+          callback = this._transactions_in_progress.get(transaction_id);
+          if (callback) {
+            callback(source_id, data);
+          }
+          break;
+        case COMMAND_GET_STATE:
+          break;
+        case COMMAND_GET_PROOF:
+          ref$ = parse_get_proof_request(data), state_version = ref$[0], node_id = ref$[1];
+          this._make_response(source_id, transaction_id, this._dht['get_state_proof'](state_version, node_id));
+          break;
+        case COMMAND_MAKE_CONNECTION:
+        }
+      }
       /**
        * @param {!Uint8Array}	seed			Seed used to generate bootstrap node's keys (it may be different from `dht_public_key` in constructor for scalability purposes
        * @param {string}		ip				IP on which to listen
@@ -192,16 +240,16 @@
           function fn$(arg$){
             var target_node_id, parent_node_id, parent_state_version, this$ = this;
             target_node_id = arg$[0], parent_node_id = arg$[1], parent_state_version = arg$[2];
-            this._make_request(parent_node_id, 'get_proof', compose_get_proof_request(target_node_id, parent_state_version), GET_PROOF_REQUEST_TIMEOUT).then(function(proof){
+            this._make_request(parent_node_id, COMMAND_GET_PROOF, compose_get_proof_request(parent_state_version, target_node_id), GET_PROOF_REQUEST_TIMEOUT).then(function(proof){
               var target_node_state_version;
               target_node_state_version = this$._dht['check_state_proof'](parent_state_version, parent_node_id, proof, target_node_id);
               if (target_node_state_version) {
                 this$._initiate_p2p_connection().then(function(local_connection_details){
-                  return this$._make_request(parent_node_id, 'make_connection', compose_make_connection_request(target_node_id, local_connection_details), MAKE_CONNECTION_REQUEST_TIMEOUT).then(function(remote_connection_details){
+                  return this$._make_request(parent_node_id, COMMAND_MAKE_CONNECTION, compose_make_connection_request(target_node_id, local_connection_details), MAKE_CONNECTION_REQUEST_TIMEOUT).then(function(remote_connection_details){
                     return this$._establish_p2p_connection(local_connection_details, remote_connection_details);
                   });
                 }).then(function(){
-                  return this$._make_request(target_node_id, 'get_state', target_node_state_version, GET_STATE_REQUEST_TIMEOUT).then(parse_get_state_response).then(function(arg$){
+                  return this$._make_request(target_node_id, COMMAND_GET_STATE, target_node_state_version, GET_STATE_REQUEST_TIMEOUT).then(parse_get_state_response).then(function(arg$){
                     var state_version, proof, peers;
                     state_version = arg$[0], proof = arg$[1], peers = arg$[2];
                     if (this$._dht['check_state_proof'](state_version, target_node_id, proof, target_node_id)) {
@@ -268,7 +316,7 @@
       }
       /**
        * @param {!Uint8Array}	target_id
-       * @param {string}		command
+       * @param {number}		command
        * @param {!Uint8Array}	data
        * @param {number}		timeout		In seconds
        *
@@ -279,19 +327,30 @@
         return new Promise(function(resolve, reject){
           var transaction_id, timeout;
           transaction_id = this$._transactions_counter();
-          this$._transactions_in_progress.set(transaction_id, function(data){
-            clearTimeout(timeout);
-            this._timeouts['delete'](timeout);
-            return resolve(data);
+          this$._transactions_in_progress.set(transaction_id, function(source_id, data){
+            if (are_arrays_equal(target_id, source_id)) {
+              clearTimeout(timeout);
+              this._timeouts['delete'](timeout);
+              this._transactions_in_progress['delete'](transaction_id);
+              return resolve(data);
+            }
           });
           timeout = timeoutSet(timeout, function(){
-            reject();
             this$._transactions_in_progress['delete'](transaction_id);
             this$._timeouts['delete'](timeout);
+            reject();
           });
           this$._timeouts.add(timeout);
-          this$['fire']('request', target_id, transaction_id, command, data);
+          this$._send(target_id, command, compose_payload(transaction_id, data));
         });
+      }
+      /**
+       * @param {!Uint8Array}	target_id
+       * @param {number}		transaction_id
+       * @param {!Uint8Array}	data
+       */,
+      _make_response: function(target_id, transaction_id, data){
+        this._send(target_id, COMMAND_RESPONSE, compose_payload(transaction_id, data));
       }
       /**
        * @return {number} From range `[0, 2 ** 16)`
@@ -304,8 +363,15 @@
           this._transactions_counter = 0;
         }
         return transaction_id;
-      },
-      _make_response: function(source_id, transaction_id, data){}
+      }
+      /**
+       * @param {!Uint8Array} target_id
+       * @param {!Uint8Array} command
+       * @param {!Uint8Array} payload
+       */,
+      _send: function(target_id, command, payload){
+        this['fire']('send', target_id, command, payload);
+      }
     };
     DHT.prototype = Object.assign(Object.create(asyncEventer.prototype), DHT.prototype);
     Object.defineProperty(DHT.prototype, 'constructor', {

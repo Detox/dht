@@ -3,30 +3,34 @@
  * @author  Nazar Mokrynskyi <nazar@mokrynskyi.com>
  * @license 0BSD
  */
-const ID_LENGTH	= 32
+const ID_LENGTH							= 32
+const COMMAND_RESPONSE					= 0
+const COMMAND_GET_STATE					= 1
+const COMMAND_GET_PROOF					= 2
+const COMMAND_MAKE_CONNECTION			= 3
 # Would be nice to make these configurable on instance level
 const GET_PROOF_REQUEST_TIMEOUT			= 5
 const MAKE_CONNECTION_REQUEST_TIMEOUT	= 10
 const GET_STATE_REQUEST_TIMEOUT			= 5
 /**
- * @param {!Uint8Array} node_id
  * @param {!Uint8Array} state_version
+ * @param {!Uint8Array} node_id
  *
  * @return {!Uint8Array}
  */
-function compose_get_proof_request (node_id, state_version)
+function compose_get_proof_request (state_version, node_id)
 	new Uint8Array(ID_LENGTH * 2)
-		..set(node_id)
-		..set(state_version, ID_LENGTH)
+		..set(node_id, ID_LENGTH)
+		..set(state_version)
 /**
  * @param {!Uint8Array} data
  *
- * @return {!Array<!Uint8Array>} `[node_id, state_version]`
+ * @return {!Array<!Uint8Array>} `[state_version, node_id]`
  */
 function parse_get_proof_request (data)
-	node_id			= data.subarray(0, ID_LENGTH)
-	state_version	= data.subarray(ID_LENGTH)
-	[node_id, state_version]
+	state_version	= data.subarray(0, ID_LENGTH)
+	node_id			= data.subarray(ID_LENGTH)
+	[state_version, node_id]
 /**
  * @param {!Uint8Array} node_id
  * @param {!Uint8Array} connection_details
@@ -46,10 +50,33 @@ function parse_make_connection_request (data)
 	node_id				= data.subarray(0, ID_LENGTH)
 	connection_details	= data.subarray(ID_LENGTH)
 	[node_id, connection_details]
+/**
+ * @param {number}		transaction_id
+ * @param {!Uint8Array}	data
+ *
+ * @return {!Uint8Array}
+ */
+function compose_payload (transaction_id, data)
+	array	= new Uint8Array(2 + data.length)
+		..set(data, 2)
+	new DataView(array.buffer)
+		..setUint16(0, transaction_id, false)
+	array
+/**
+ * @param {!Uint8Array} payload
+ *
+ * @return {!Array<!Uint8Array>} `[transaction_id, data]`
+ */
+function parse_payload (payload)
+	view			= new DataView(payload.buffer, payload.byteOffset, payload.byteLength)
+	transaction_id	= view.getUint16(0, false)
+	data			= payload.subarray(2)
+	[transaction_id, data]
 
 function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
-	concat_arrays	= detox-utils['concat_arrays']
-	timeoutSet		= detox-utils['timeoutSet']
+	are_arrays_equal	= detox-utils['are_arrays_equal']
+	concat_arrays		= detox-utils['concat_arrays']
+	timeoutSet			= detox-utils['timeoutSet']
 
 	/**
 	 * @param {!Uint8Array}			state_version
@@ -114,10 +141,20 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 			void # TODO: Bootstrap
 
 	DHT:: =
-		'handle_request' : (source_id, transaction_id, command, data) !->
-			# TODO
-		'handle_response' : (source_id, transaction_id, data) !->
-			# TODO
+		'receive' : (source_id, command, payload) !->
+			[transaction_id, data]	= parse_payload(payload)
+			switch command
+				case COMMAND_RESPONSE
+					callback	= @_transactions_in_progress.get(transaction_id)
+					if callback
+						callback(source_id, data)
+				case COMMAND_GET_STATE
+					void
+				case COMMAND_GET_PROOF
+					[state_version, node_id]	= parse_get_proof_request(data)
+					@_make_response(source_id, transaction_id, @_dht['get_state_proof'](state_version, node_id))
+				case COMMAND_MAKE_CONNECTION
+					void
 		/**
 		 * @param {!Uint8Array}	seed			Seed used to generate bootstrap node's keys (it may be different from `dht_public_key` in constructor for scalability purposes
 		 * @param {string}		ip				IP on which to listen
@@ -157,17 +194,17 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					if !pending
 						@_handle_lookup(id, nodes_for_next_round)
 				for let [target_node_id, parent_node_id, parent_state_version] in nodes_to_connect_to
-					@_make_request(parent_node_id, 'get_proof', compose_get_proof_request(target_node_id, parent_state_version), GET_PROOF_REQUEST_TIMEOUT)
+					@_make_request(parent_node_id, COMMAND_GET_PROOF, compose_get_proof_request(parent_state_version, target_node_id), GET_PROOF_REQUEST_TIMEOUT)
 						.then (proof) !~>
 							target_node_state_version	= @_dht['check_state_proof'](parent_state_version, parent_node_id, proof, target_node_id)
 							if target_node_state_version
 								@_initiate_p2p_connection()
 									.then (local_connection_details) ~>
-										@_make_request(parent_node_id, 'make_connection', compose_make_connection_request(target_node_id, local_connection_details), MAKE_CONNECTION_REQUEST_TIMEOUT)
+										@_make_request(parent_node_id, COMMAND_MAKE_CONNECTION, compose_make_connection_request(target_node_id, local_connection_details), MAKE_CONNECTION_REQUEST_TIMEOUT)
 											.then (remote_connection_details) ~>
 												@_establish_p2p_connection(local_connection_details, remote_connection_details)
 									.then ~>
-										@_make_request(target_node_id, 'get_state', target_node_state_version, GET_STATE_REQUEST_TIMEOUT)
+										@_make_request(target_node_id, COMMAND_GET_STATE, target_node_state_version, GET_STATE_REQUEST_TIMEOUT)
 											.then(parse_get_state_response)
 											.then ([state_version, proof, peers]) !~>
 												if @_dht['check_state_proof'](state_version, target_node_id, proof, target_node_id)
@@ -223,7 +260,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 			@_timeouts.forEach(clearTimeout)
 		/**
 		 * @param {!Uint8Array}	target_id
-		 * @param {string}		command
+		 * @param {number}		command
 		 * @param {!Uint8Array}	data
 		 * @param {number}		timeout		In seconds
 		 *
@@ -232,18 +269,27 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		_make_request : (target_id, command, data, timeout) ->
 			new Promise (resolve, reject) !~>
 				transaction_id	= @_transactions_counter()
-				@_transactions_in_progress.set(transaction_id, (data) ->
-					clearTimeout(timeout)
-					@_timeouts.delete(timeout)
-					resolve(data)
+				@_transactions_in_progress.set(transaction_id, (source_id, data) ->
+					if are_arrays_equal(target_id, source_id)
+						clearTimeout(timeout)
+						@_timeouts.delete(timeout)
+						@_transactions_in_progress.delete(transaction_id)
+						resolve(data)
 				)
 				timeout = timeoutSet(timeout, !~>
-					reject()
 					@_transactions_in_progress.delete(transaction_id)
 					@_timeouts.delete(timeout)
+					reject()
 				)
 				@_timeouts.add(timeout)
-				@'fire'('request', target_id, transaction_id, command, data)
+				@_send(target_id, command, compose_payload(transaction_id, data))
+		/**
+		 * @param {!Uint8Array}	target_id
+		 * @param {number}		transaction_id
+		 * @param {!Uint8Array}	data
+		 */
+		_make_response : (target_id, transaction_id, data) !->
+			@_send(target_id, COMMAND_RESPONSE, compose_payload(transaction_id, data))
 		/**
 		 * @return {number} From range `[0, 2 ** 16)`
 		 */
@@ -253,8 +299,13 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 			if @_transactions_counter == 2 ** 16 # Overflow, start from 0
 				@_transactions_counter = 0
 			transaction_id
-		_make_response : (source_id, transaction_id, data) !->
-			# TODO
+		/**
+		 * @param {!Uint8Array} target_id
+		 * @param {!Uint8Array} command
+		 * @param {!Uint8Array} payload
+		 */
+		_send : (target_id, command, payload) !->
+			@'fire'('send', target_id, command, payload)
 
 	DHT:: = Object.assign(Object.create(async-eventer::), DHT::)
 	Object.defineProperty(DHT::, 'constructor', {value: DHT})
