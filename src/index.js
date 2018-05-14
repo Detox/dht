@@ -5,7 +5,7 @@
  * @license 0BSD
  */
 (function(){
-  var ID_LENGTH, COMMAND_RESPONSE, COMMAND_GET_STATE, COMMAND_GET_PROOF, GET_PROOF_REQUEST_TIMEOUT, MAKE_CONNECTION_REQUEST_TIMEOUT, GET_STATE_REQUEST_TIMEOUT;
+  var ID_LENGTH, COMMAND_RESPONSE, COMMAND_GET_STATE, COMMAND_GET_PROOF, GET_PROOF_REQUEST_TIMEOUT, MAKE_CONNECTION_REQUEST_TIMEOUT, GET_STATE_REQUEST_TIMEOUT, GET_TIMEOUT;
   ID_LENGTH = 32;
   COMMAND_RESPONSE = 0;
   COMMAND_GET_STATE = 1;
@@ -13,6 +13,7 @@
   GET_PROOF_REQUEST_TIMEOUT = 5;
   MAKE_CONNECTION_REQUEST_TIMEOUT = 10;
   GET_STATE_REQUEST_TIMEOUT = 5;
+  GET_TIMEOUT = 5;
   /**
    * @param {!Uint8Array} state_version
    * @param {!Uint8Array} node_id
@@ -116,27 +117,77 @@
     /**
      * @constructor
      *
+     * @param {number}	size
+     *
+     * @return {!Values_cache}
+     */
+    function Values_cache(size){
+      if (!(this instanceof Values_cache)) {
+        return new Values_cache(size);
+      }
+      this._size = size;
+      this._map = ArrayMap();
+    }
+    Values_cache.prototype = {
+      /**
+       * @param {!Uint8Array}	key
+       * @param {!Map}		value
+       */
+      add: function(key, value){
+        if (this._map.has(key)) {
+          this._map['delete'](key);
+        }
+        this._map.set(key, value);
+        if (this._map.size > this._size) {
+          this._map['delete'](this._map.keys().next().value);
+        }
+      }
+      /**
+       * @param {!Uint8Array}	key
+       *
+       * @return {!Map}
+       */,
+      get: function(key){
+        var value;
+        value = this._map.get(key);
+        if (value) {
+          this._map['delete'](key);
+          this._map.set(key, value);
+        }
+        return value;
+      }
+    };
+    Object.defineProperty(Values_cache.prototype, 'constructor', {
+      value: Values_cache
+    });
+    /**
+     * @constructor
+     *
      * @param {!Uint8Array}		dht_public_key						Own ID (Ed25519 public key)
      * @param {!Array<!Object>}	bootstrap_nodes						Array of objects with keys (all of them are required) `node_id`, `host` and `port`
      * @param {!Function}		hash_function						Hash function to be used for Merkle Tree
-     * @param {!Function}		verify								Function for verifying Ed25519 signatures, arguments are `Uint8Array`s `(signature, data. public_key)`
+     * @param {!Function}		verify_function						Function for verifying Ed25519 signatures, arguments are `Uint8Array`s `(signature, data. public_key)`
      * @param {number}			bucket_size							Size of a bucket from Kademlia design
      * @param {number}			state_history_size					How many versions of local history will be kept
+     * @param {number}			values_cache_size					How many values will be kept in cache
      * @param {number}			fraction_of_nodes_from_same_peer	Max fraction of nodes originated from single peer allowed on lookup start
      *
      * @return {!DHT}
      */
-    function DHT(dht_public_key, bootstrap_nodes, hash_function, verify, bucket_size, state_history_size, fraction_of_nodes_from_same_peer){
+    function DHT(dht_public_key, bootstrap_nodes, hash_function, verify_function, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer){
       var i$, len$, bootstrap_node;
       fraction_of_nodes_from_same_peer == null && (fraction_of_nodes_from_same_peer = 0.2);
       if (!(this instanceof DHT)) {
-        return new DHT(dht_public_key, bootstrap_nodes, hash_function, verify, bucket_size, state_history_size, fraction_of_nodes_from_same_peer);
+        return new DHT(dht_public_key, bootstrap_nodes, hash_function, verify_function, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer);
       }
       asyncEventer.call(this);
       this._dht = esDht(dht_public_key, hash_function, bucket_size, state_history_size, fraction_of_nodes_from_same_peer);
+      this._hash = hash_function;
+      this._verify = verify_function;
       this._transactions_counter = detoxUtils['random_int'](0, Math.pow(2, 16) - 1);
       this._transactions_in_progress = new Map;
       this._timeouts = new Set;
+      this._values = Values_cache(values_cache_size);
       for (i$ = 0, len$ = bootstrap_nodes.length; i$ < len$; ++i$) {
         bootstrap_node = bootstrap_nodes[i$];
       }
@@ -208,7 +259,7 @@
           function done(){
             pending--;
             if (!pending) {
-              return this._handle_lookup(id, nodes_for_next_round);
+              this$._handle_lookup(id, nodes_for_next_round);
             }
           }
           for (i$ = 0, len$ = (ref$ = nodes_to_connect_to).length; i$ < len$; ++i$) {
@@ -252,19 +303,80 @@
       /**
        * @return {!Array<!Uint8Array>}
        */,
-      'get_peers': function(){}
+      'get_peers': function(){
+        return this._dht['get_state'][2];
+      }
       /**
        * @param {!Uint8Array} key
        *
        * @return {!Promise}
        */,
-      'get': function(key){}
+      'get': function(key){
+        var value, this$ = this;
+        value = this._values.get(key);
+        if (value) {
+          return Promise.resolve(value);
+        }
+        return this['lookup'](key).then(function(nodes){
+          return new Promise(function(resolve, reject){
+            var pending, stop, found, i$, ref$, len$, node_id;
+            pending = nodes.length;
+            stop = false;
+            found = null;
+            function done(){
+              if (stop) {
+                return;
+              }
+              pending--;
+              if (!found && !pending) {
+                reject();
+              } else {
+                resolve(found[1]);
+              }
+            }
+            for (i$ = 0, len$ = (ref$ = nodes).length; i$ < len$; ++i$) {
+              node_id = ref$[i$];
+              this$._make_request(node_id, COMMAND_GET, key, GET_TIMEOUT).then(fn$)['catch'](done);
+            }
+            function fn$(value){
+              var version;
+              if (stop) {
+                return;
+              }
+              if (are_arrays_equal(this$._hash(value), key)) {
+                stop = true;
+                resolve(value);
+                return;
+              }
+              version = this$._verify_data(key, value);
+              if (version) {
+                if (!found || found[0] < version) {
+                  found = [version, value];
+                }
+              }
+              done();
+            }
+          });
+        });
+      }
+      /**
+       * @param {!Uint8Array} key
+       * @param {!Uint8Array} value
+       *
+       * @return {number} Version
+       */,
+      _verify_data: function(key, value){}
       /**
        * @param {!Uint8Array} data
        *
        * @return {!Uint8Array} Key
        */,
-      'put_immutable': function(data){}
+      'put_immutable': function(data){
+        var key;
+        key = this._hash(data);
+        this._values.add(key, value);
+        return key;
+      }
       /**
        * @param {!Uint8Array} public_key
        * @param {!Uint8Array} data

@@ -11,6 +11,7 @@ const COMMAND_GET_PROOF					= 2
 const GET_PROOF_REQUEST_TIMEOUT			= 5
 const MAKE_CONNECTION_REQUEST_TIMEOUT	= 10
 const GET_STATE_REQUEST_TIMEOUT			= 5
+const GET_TIMEOUT						= 5
 /**
  * @param {!Uint8Array} state_version
  * @param {!Uint8Array} node_id
@@ -93,30 +94,69 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 				for i from 0 til peers.length / ID_LENGTH
 					peers.subarray(ID_LENGTH * i, ID_LENGTH * (i + 1))
 		[state_version, proof, peers]
-
+	/**
+	 * @constructor
+	 *
+	 * @param {number}	size
+	 *
+	 * @return {!Values_cache}
+	 */
+	!function Values_cache (size)
+		if !(@ instanceof Values_cache)
+			return new Values_cache(size)
+		@_size	= size
+		@_map	= ArrayMap()
+	Values_cache:: =
+		/**
+		 * @param {!Uint8Array}	key
+		 * @param {!Map}		value
+		 */
+		add : (key, value) !->
+			if @_map.has(key)
+				@_map.delete(key)
+			@_map.set(key, value)
+			if @_map.size > @_size
+				# Delete first element in the map
+				@_map.delete(@_map.keys().next().value)
+		/**
+		 * @param {!Uint8Array}	key
+		 *
+		 * @return {!Map}
+		 */
+		get : (key) ->
+			value	= @_map.get(key)
+			if value
+				@_map.delete(key)
+				@_map.set(key, value)
+			value
+	Object.defineProperty(Values_cache::, 'constructor', {value: Values_cache})
 	/**
 	 * @constructor
 	 *
 	 * @param {!Uint8Array}		dht_public_key						Own ID (Ed25519 public key)
 	 * @param {!Array<!Object>}	bootstrap_nodes						Array of objects with keys (all of them are required) `node_id`, `host` and `port`
 	 * @param {!Function}		hash_function						Hash function to be used for Merkle Tree
-	 * @param {!Function}		verify								Function for verifying Ed25519 signatures, arguments are `Uint8Array`s `(signature, data. public_key)`
+	 * @param {!Function}		verify_function						Function for verifying Ed25519 signatures, arguments are `Uint8Array`s `(signature, data. public_key)`
 	 * @param {number}			bucket_size							Size of a bucket from Kademlia design
 	 * @param {number}			state_history_size					How many versions of local history will be kept
+	 * @param {number}			values_cache_size					How many values will be kept in cache
 	 * @param {number}			fraction_of_nodes_from_same_peer	Max fraction of nodes originated from single peer allowed on lookup start
 	 *
 	 * @return {!DHT}
 	 */
-	!function DHT (dht_public_key, bootstrap_nodes, hash_function, verify, bucket_size, state_history_size, fraction_of_nodes_from_same_peer = 0.2)
+	!function DHT (dht_public_key, bootstrap_nodes, hash_function, verify_function, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer = 0.2)
 		if !(@ instanceof DHT)
-			return new DHT(dht_public_key, bootstrap_nodes, hash_function, verify, bucket_size, state_history_size, fraction_of_nodes_from_same_peer)
+			return new DHT(dht_public_key, bootstrap_nodes, hash_function, verify_function, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer)
 		async-eventer.call(@)
 
 		@_dht						= es-dht(dht_public_key, hash_function, bucket_size, state_history_size, fraction_of_nodes_from_same_peer)
+		@_hash						= hash_function
+		@_verify					= verify_function
 		# Start from random transaction number
 		@_transactions_counter		= detox-utils['random_int'](0, 2 ** 16 - 1)
 		@_transactions_in_progress	= new Map
 		@_timeouts					= new Set
+		@_values					= Values_cache(values_cache_size)
 		for bootstrap_node in bootstrap_nodes
 			void # TODO: Bootstrap
 
@@ -169,7 +209,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					return
 				nodes_for_next_round	= []
 				pending					= nodes_to_connect_to.length
-				function done
+				!~function done
 					pending--
 					if !pending
 						@_handle_lookup(id, nodes_for_next_round)
@@ -204,24 +244,72 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 * @return {!Array<!Uint8Array>}
 		 */
 		'get_peers' : ->
+			@_dht['get_state'][2]
 		/**
 		 * @param {!Uint8Array} key
 		 *
 		 * @return {!Promise}
 		 */
 		'get' : (key) ->
+			value	= @_values.get(key)
+			if value
+				return Promise.resolve(value)
+			@'lookup'(key).then (nodes) ~>
+				new Promise (resolve, reject) !~>
+					pending	= nodes.length
+					stop	= false
+					found	= null
+					!function done
+						if stop
+							return
+						pending--
+						if !found && !pending
+							reject()
+						else
+							resolve(found[1])
+					for node_id in nodes
+						@_make_request(node_id, COMMAND_GET, key, GET_TIMEOUT)
+							.then (value) !~>
+								if stop
+									return
+								# Immutable values can be returned immediately
+								if are_arrays_equal(@_hash(value), key)
+									stop	:= true
+									resolve(value)
+									return
+								# Mutable values will have version, so we wait and pick value with higher version
+								version	= @_verify_data(key, value)
+								if version
+									if !found || found[0] < version
+										found	:= [version, value]
+								done()
+							.catch(done)
+		/**
+		 * @param {!Uint8Array} key
+		 * @param {!Uint8Array} value
+		 *
+		 * @return {number} Version
+		 */
+		_verify_data : (key, value) ->
+			# TODO
 		/**
 		 * @param {!Uint8Array} data
 		 *
 		 * @return {!Uint8Array} Key
 		 */
 		'put_immutable' : (data) ->
+			# TODO: Configurable data size limit
+			key	= @_hash(data)
+			@_values.add(key, value)
+			# TODO:
+			key
 		/**
 		 * @param {!Uint8Array} public_key
 		 * @param {!Uint8Array} data
 		 * @param {!Uint8Array} signature
 		 */
 		'put_mutable' : (public_key, data, signature) !->
+			# TODO
 		'destroy' : ->
 			# TODO: Check this property in relevant places
 			@_destroyed	= true
