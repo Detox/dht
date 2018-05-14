@@ -5,31 +5,41 @@
  * @license 0BSD
  */
 (function(){
-  function Wrapper(asyncEventer, esDht){
+  function Wrapper(detoxCrypto, asyncEventer, esDht){
     /**
      * @constructor
      *
-     * @param {!Uint8Array}	id									Own ID
-     * @param {!Function}	hash_function						Hash function to be used for Merkle Tree
-     * @param {number}		bucket_size							Size of a bucket from Kademlia design
-     * @param {number}		state_history_size					How many versions of local history will be kept
-     * @param {number}		fraction_of_nodes_from_same_peer	Max fraction of nodes originated from single peer allowed on lookup start
+     * @param {!Uint8Array}		dht_public_key						Own ID
+     * @param {!Array<!Object>}	bootstrap_nodes						Array of objects with keys (all of them are required) `node_id`, `host` and `ip`
+     * @param {!Function}		hash_function						Hash function to be used for Merkle Tree
+     * @param {!Function}		verify								Function for verifying Ed25519 signatures, arguments are `Uint8Array`s `(signature, data. public_key)`
+     * @param {number}			bucket_size							Size of a bucket from Kademlia design
+     * @param {number}			state_history_size					How many versions of local history will be kept
+     * @param {number}			fraction_of_nodes_from_same_peer	Max fraction of nodes originated from single peer allowed on lookup start
      *
      * @return {!DHT}
      */
-    function DHT(id, hash_function, bucket_size, state_history_size, fraction_of_nodes_from_same_peer){
+    function DHT(dht_public_key, bootstrap_nodes, hash_function, verify, bucket_size, state_history_size, fraction_of_nodes_from_same_peer){
       fraction_of_nodes_from_same_peer == null && (fraction_of_nodes_from_same_peer = 0.2);
       if (!(this instanceof DHT)) {
-        return new DHT(id, hash_function, bucket_size, state_history_size, fraction_of_nodes_from_same_peer);
+        return new DHT(dht_public_key, bootstrap_nodes, hash_function, verify, bucket_size, state_history_size, fraction_of_nodes_from_same_peer);
       }
       asyncEventer.call(this);
     }
     DHT.prototype = {
       /**
-       * @param {string}	ip
-       * @param {number}	port
+       * @param {!Uint8Array}	seed			Seed used to generate bootstrap node's keys (it may be different from `dht_public_key` in constructor for scalability purposes
+       * @param {string}		ip				IP on which to listen
+       * @param {number}		port			Port on which to listen
+       * @param {string=}		public_address	Publicly reachable address (can be IP or domain name) reachable
+       * @param {number=}		public_port		Port that corresponds to `public_address`
        */
-      'listen': function(ip, port){}
+      'listen': function(seed, ip, port, public_address, public_port){
+        var keypair;
+        public_address == null && (public_address = ip);
+        public_port == null && (public_port = port);
+        return keypair = detoxCrypto['create_keypair'](seed);
+      }
       /**
        * @param {!Uint8Array} id
        *
@@ -64,13 +74,16 @@
     Object.defineProperty(DHT.prototype, 'constructor', {
       value: DHT
     });
-    return DHT;
+    return {
+      'ready': detoxCrypto['ready'],
+      'DHT': DHT
+    };
   }
   if (typeof define === 'function' && define['amd']) {
-    define(['async-eventer', 'es-dht'], Wrapper);
+    define(['@detox/crypto', 'async-eventer', 'es-dht'], Wrapper);
   } else if (typeof exports === 'object') {
-    module.exports = Wrapper(require('async-eventer'), require('es-dht'));
+    module.exports = Wrapper(require('@detox/crypto'), require('async-eventer'), require('es-dht'));
   } else {
-    this['detox_dht'] = Wrapper(this['async_eventer'], this['es_dht']);
+    this['detox_dht'] = Wrapper(this['detox_crypto'], 'async_eventer', this['es_dht']);
   }
 }).call(this);
