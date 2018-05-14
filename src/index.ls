@@ -99,6 +99,7 @@ function parse_put_value_request (data)
 
 function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 	blake2b_256			= detox-crypto['blake2b_256']
+	create_signature	= detox-crypto['sign']
 	verify_signature	= detox-crypto['verify']
 	are_arrays_equal	= detox-utils['are_arrays_equal']
 	concat_arrays		= detox-utils['concat_arrays']
@@ -379,15 +380,17 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					@_make_request(node_id, COMMAND_PUT_VALUE, data, PUT_TIMEOUT)
 						.catch(->)
 		/**
-		 * @param {!Uint8Array}	public_key
-		 * @param {number}		version
+		 * @param {!Uint8Array}	public_key	Ed25519 public key, will be used as key for data
+		 * @param {!Uint8Array}	private_key	Ed25519 private key
+		 * @param {number}		version		Up to 32-bit number
 		 * @param {!Uint8Array}	value
-		 * @param {!Uint8Array}	signature
 		 */
-		'put_mutable' : (public_key, version, value, signature) !->
-			payload	= concat_arrays([compose_mutable_value(version, value), signature])
-			@_values.add(public_key, payload)
-			@_put(public_key, payload)
+		'put_mutable' : (public_key, private_key, version, value) !->
+			payload		= compose_mutable_value(version, value)
+			signature	= create_signature(payload, public_key, private_key)
+			data		= concat_arrays([payload, signature])
+			@_values.add(public_key, data)
+			@_put(public_key, data)
 		'destroy' : ->
 			# TODO: Check this property in relevant places
 			@_destroyed	= true

@@ -117,8 +117,9 @@
     return [key, payload];
   }
   function Wrapper(detoxCrypto, detoxUtils, asyncEventer, esDht){
-    var blake2b_256, verify_signature, are_arrays_equal, concat_arrays, timeoutSet;
+    var blake2b_256, create_signature, verify_signature, are_arrays_equal, concat_arrays, timeoutSet;
     blake2b_256 = detoxCrypto['blake2b_256'];
+    create_signature = detoxCrypto['sign'];
     verify_signature = detoxCrypto['verify'];
     are_arrays_equal = detoxUtils['are_arrays_equal'];
     concat_arrays = detoxUtils['concat_arrays'];
@@ -475,16 +476,18 @@
         });
       }
       /**
-       * @param {!Uint8Array}	public_key
-       * @param {number}		version
+       * @param {!Uint8Array}	public_key	Ed25519 public key, will be used as key for data
+       * @param {!Uint8Array}	private_key	Ed25519 private key
+       * @param {number}		version		Up to 32-bit number
        * @param {!Uint8Array}	value
-       * @param {!Uint8Array}	signature
        */,
-      'put_mutable': function(public_key, version, value, signature){
-        var payload;
-        payload = concat_arrays([compose_mutable_value(version, value), signature]);
-        this._values.add(public_key, payload);
-        this._put(public_key, payload);
+      'put_mutable': function(public_key, private_key, version, value){
+        var payload, signature, data;
+        payload = compose_mutable_value(version, value);
+        signature = create_signature(payload, public_key, private_key);
+        data = concat_arrays([payload, signature]);
+        this._values.add(public_key, data);
+        this._put(public_key, data);
       },
       'destroy': function(){
         this._destroyed = true;
