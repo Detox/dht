@@ -176,7 +176,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 													)
 												done()
 							else
-								# TODO: Drop connection on bad proof
+								# TODO: Drop connection on bad proof (also take into account timeouts, since peer may just refuse to answer)
 								done()
 						.catch !->
 							done()
