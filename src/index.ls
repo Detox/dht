@@ -108,6 +108,8 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 	concat_arrays		= detox-utils['concat_arrays']
 	timeoutSet			= detox-utils['timeoutSet']
 	intervalSet			= detox-utils['intervalSet']
+	ArrayMap			= detox-utils['ArrayMap']
+	error_handler		= detox-utils['error_handler']
 
 	/**
 	 * @param {!Uint8Array}			state_version
@@ -119,7 +121,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 	function compose_get_state_response (state_version, proof, peers)
 		proof_height	= proof.length / (ID_LENGTH + 1)
 		peers			= concat_arrays(peers)
-		new Uint8Array(ID_LENGTH + proof.length + peers.length)
+		new Uint8Array(ID_LENGTH + 1 + proof.length + peers.length)
 			..set(state_version)
 			..set([proof_height], ID_LENGTH)
 			..set(proof, ID_LENGTH + 1)
@@ -211,25 +213,30 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					.then ([state_version, proof, peers]) !~>
 						if !@'set_peer'(peer_id, state_version, proof, peers)
 							void # TODO: Drop connection on bad proof
-					.catch(->)
+					.catch(error_handler)
 		)
 
 	DHT:: =
 		/**
+		 * @return {!Uint8Array}
+		 */
+		'get_state' : ->
+			[state_version, proof, peers]	= @_dht['get_state']()
+			compose_get_state_response(state_version, proof, peers)
+		/**
 		 * @return {!Array<!Uint8Array>}
 		 */
 		'get_peers' : ->
-			@_dht['get_state'][2]
+			@_dht['get_state']()[2]
 		/**
-		 * @param {!Uint8Array}			peer_id				Id of a peer
-		 * @param {!Uint8Array}			peer_state_version	State version of a peer
-		 * @param {!Uint8Array}			proof				Proof for specified state
-		 * @param {!Array<!Uint8Array>}	peer_peers			Peer's peers that correspond to `state_version`
+		 * @param {!Uint8Array}	peer_id	Id of a peer
+		 * @param {!Uint8Array}	state	Peer's state generated with `get_state()` method
 		 *
 		 * @return {boolean} `false` if proof is not valid, returning `true` only means there was not errors, but peer was not necessarily added to k-bucket
 		 *                   (use `has_peer()` method if confirmation of addition to k-bucket is needed)
 		 */
-		'set_peer' : (peer_id, peer_state_version, proof, peer_peers) ->
+		'set_peer' : (peer_id, state) ->
+			[peer_state_version, proof, peer_peers]	= parse_get_state_response(state)
 			@_dht['set_peer'](peer_id, peer_state_version, proof, peer_peers)
 		/**
 		 * @param {!Uint8Array} node_id
@@ -243,6 +250,11 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 */
 		'del_peer' : (peer_id) !->
 			@_dht['del_peer'](peer_id)
+		/**
+		 * @param {!Uint8Array}	source_id
+		 * @param {number}		command
+		 * @param {!Uint8Array}	payload
+		 */
 		'receive' : (source_id, command, payload) !->
 			[transaction_id, data]	= parse_payload(payload)
 			switch command
@@ -312,7 +324,8 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 							else
 								# TODO: Drop connection on bad proof (also take into account timeouts, since peer may just refuse to answer)
 								done()
-						.catch !->
+						.catch (error) !->
+							error_handler(error)
 							done()
 		/**
 		 * @param {!Uint8Array}	peer_peer_id	Peer's peer ID
@@ -325,9 +338,9 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		/**
 		 * @param {!Uint8Array} key
 		 *
-		 * @return {!Promise}
+		 * @return {!Promise} Resolves with value on success
 		 */
-		'get' : (key) ->
+		'get_value' : (key) ->
 			value	= @_values.get(key)
 			if value
 				return Promise.resolve(
@@ -368,7 +381,9 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 									if !found || found[0] < payload[0]
 										found	:= payload
 								done()
-							.catch(done)
+							.catch (error) !->
+								error_handler(error)
+								done()
 		/**
 		 * @param {!Uint8Array} key
 		 * @param {!Uint8Array} data
@@ -387,37 +402,37 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		/**
 		 * @param {!Uint8Array} value
 		 *
-		 * @return {!Uint8Array} Key
+		 * @return {!Array<!Uint8Array>} `[key, data]`, can be published to DHT with `put_value()` method
 		 */
-		'put_immutable' : (value) ->
+		'make_immutable_value' : (value) ->
 			# TODO: Configurable data size limit
 			key	= blake2b_256(value)
-			@_values.add(key, value)
-			@_put(key, value)
-			key
-		/**
-		 * @param {!Uint8Array} key
-		 * @param {!Uint8Array} payload
-		 */
-		_put : (key, payload) !->
-			@'lookup'(key).then (nodes) ~>
-				if !nodes.length
-					return
-				data	= compose_put_value_request(key, payload)
-				for node_id in nodes
-					@_make_request(node_id, COMMAND_PUT_VALUE, data, PUT_VALUE_TIMEOUT)
+			[key, value]
 		/**
 		 * @param {!Uint8Array}	public_key	Ed25519 public key, will be used as key for data
 		 * @param {!Uint8Array}	private_key	Ed25519 private key
 		 * @param {number}		version		Up to 32-bit number
 		 * @param {!Uint8Array}	value
+		 *
+		 * @return {!Array<!Uint8Array>} `[key, data]`, can be published to DHT with `put_value()` method
 		 */
-		'put_mutable' : (public_key, private_key, version, value) !->
+		'make_mutable_value' : (public_key, private_key, version, value) !->
 			payload		= compose_mutable_value(version, value)
 			signature	= create_signature(payload, public_key, private_key)
 			data		= concat_arrays([payload, signature])
-			@_values.add(public_key, data)
-			@_put(public_key, data)
+			[public_key, data]
+		/**
+		 * @param {!Uint8Array} key		As returned by `make_*_value()` methods
+		 * @param {!Uint8Array} data	As returned by `make_*_value()` methods
+		 */
+		'put_value' : (key, data) !->
+			@_values.add(key, data)
+			@'lookup'(key).then (nodes) ~>
+				if !nodes.length
+					return
+				command_data	= compose_put_value_request(key, data)
+				for node_id in nodes
+					@_make_request(node_id, COMMAND_PUT_VALUE, command_data, PUT_VALUE_TIMEOUT)
 		'destroy' : ->
 			# TODO: Check this property in relevant places
 			@_destroyed	= true
@@ -427,13 +442,13 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 * @param {!Uint8Array}	target_id
 		 * @param {number}		command
 		 * @param {!Uint8Array}	data
-		 * @param {number}		timeout		In seconds
+		 * @param {number}		request_timeout	In seconds
 		 *
 		 * @return {!Promise} Will resolve with data received from `target_id`'s response or will reject on timeout
 		 */
-		_make_request : (target_id, command, data, timeout) ->
+		_make_request : (target_id, command, data, request_timeout) ->
 			promise	= new Promise (resolve, reject) !~>
-				transaction_id	= @_transactions_counter()
+				transaction_id	= @_generate_transaction_id()
 				@_transactions_in_progress.set(transaction_id, (source_id, data) ->
 					if are_arrays_equal(target_id, source_id)
 						clearTimeout(timeout)
@@ -441,14 +456,15 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 						@_transactions_in_progress.delete(transaction_id)
 						resolve(data)
 				)
-				timeout = timeoutSet(timeout, !~>
+				timeout = timeoutSet(request_timeout, !~>
+					debugger
 					@_transactions_in_progress.delete(transaction_id)
 					@_timeouts.delete(timeout)
 					reject()
 				)
 				@_timeouts.add(timeout)
 				@_send(target_id, command, compose_payload(transaction_id, data))
-			promise.catch(->)
+			promise.catch(error_handler)
 			promise
 		/**
 		 * @param {!Uint8Array}	target_id

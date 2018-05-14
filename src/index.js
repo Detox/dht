@@ -119,7 +119,7 @@
     return [key, payload];
   }
   function Wrapper(detoxCrypto, detoxUtils, asyncEventer, esDht){
-    var blake2b_256, create_signature, verify_signature, are_arrays_equal, concat_arrays, timeoutSet, intervalSet;
+    var blake2b_256, create_signature, verify_signature, are_arrays_equal, concat_arrays, timeoutSet, intervalSet, ArrayMap, error_handler;
     blake2b_256 = detoxCrypto['blake2b_256'];
     create_signature = detoxCrypto['sign'];
     verify_signature = detoxCrypto['verify'];
@@ -127,6 +127,8 @@
     concat_arrays = detoxUtils['concat_arrays'];
     timeoutSet = detoxUtils['timeoutSet'];
     intervalSet = detoxUtils['intervalSet'];
+    ArrayMap = detoxUtils['ArrayMap'];
+    error_handler = detoxUtils['error_handler'];
     /**
      * @param {!Uint8Array}			state_version
      * @param {!Uint8Array}			proof
@@ -138,7 +140,7 @@
       var proof_height, x$;
       proof_height = proof.length / (ID_LENGTH + 1);
       peers = concat_arrays(peers);
-      x$ = new Uint8Array(ID_LENGTH + proof.length + peers.length);
+      x$ = new Uint8Array(ID_LENGTH + 1 + proof.length + peers.length);
       x$.set(state_version);
       x$.set([proof_height], ID_LENGTH);
       x$.set(proof, ID_LENGTH + 1);
@@ -246,33 +248,40 @@
         var i$, ref$, len$, peer_id;
         for (i$ = 0, len$ = (ref$ = this$['get_peers']()).length; i$ < len$; ++i$) {
           peer_id = ref$[i$];
-          this$._make_request(peer_id, COMMAND_GET_STATE, null_array, GET_STATE_REQUEST_TIMEOUT).then(parse_get_state_response).then(fn$)['catch'](fn1$);
+          this$._make_request(peer_id, COMMAND_GET_STATE, null_array, GET_STATE_REQUEST_TIMEOUT).then(parse_get_state_response).then(fn$)['catch'](error_handler);
         }
         function fn$(arg$){
           var state_version, proof, peers;
           state_version = arg$[0], proof = arg$[1], peers = arg$[2];
           if (!this$['set_peer'](peer_id, state_version, proof, peers)) {}
         }
-        function fn1$(){}
       });
     }
     DHT.prototype = {
       /**
-       * @return {!Array<!Uint8Array>}
+       * @return {!Uint8Array}
        */
-      'get_peers': function(){
-        return this._dht['get_state'][2];
+      'get_state': function(){
+        var ref$, state_version, proof, peers;
+        ref$ = this._dht['get_state'](), state_version = ref$[0], proof = ref$[1], peers = ref$[2];
+        return compose_get_state_response(state_version, proof, peers);
       }
       /**
-       * @param {!Uint8Array}			peer_id				Id of a peer
-       * @param {!Uint8Array}			peer_state_version	State version of a peer
-       * @param {!Uint8Array}			proof				Proof for specified state
-       * @param {!Array<!Uint8Array>}	peer_peers			Peer's peers that correspond to `state_version`
+       * @return {!Array<!Uint8Array>}
+       */,
+      'get_peers': function(){
+        return this._dht['get_state']()[2];
+      }
+      /**
+       * @param {!Uint8Array}	peer_id	Id of a peer
+       * @param {!Uint8Array}	state	Peer's state generated with `get_state()` method
        *
        * @return {boolean} `false` if proof is not valid, returning `true` only means there was not errors, but peer was not necessarily added to k-bucket
        *                   (use `has_peer()` method if confirmation of addition to k-bucket is needed)
        */,
-      'set_peer': function(peer_id, peer_state_version, proof, peer_peers){
+      'set_peer': function(peer_id, state){
+        var ref$, peer_state_version, proof, peer_peers;
+        ref$ = parse_get_state_response(state), peer_state_version = ref$[0], proof = ref$[1], peer_peers = ref$[2];
         return this._dht['set_peer'](peer_id, peer_state_version, proof, peer_peers);
       }
       /**
@@ -288,7 +297,12 @@
        */,
       'del_peer': function(peer_id){
         this._dht['del_peer'](peer_id);
-      },
+      }
+      /**
+       * @param {!Uint8Array}	source_id
+       * @param {number}		command
+       * @param {!Uint8Array}	payload
+       */,
       'receive': function(source_id, command, payload){
         var ref$, transaction_id, data, callback, state, state_version, node_id, value, key;
         ref$ = parse_payload(payload), transaction_id = ref$[0], data = ref$[1];
@@ -381,7 +395,8 @@
               } else {
                 done();
               }
-            })['catch'](function(){
+            })['catch'](function(error){
+              error_handler(error);
               done();
             });
           }
@@ -399,9 +414,9 @@
       /**
        * @param {!Uint8Array} key
        *
-       * @return {!Promise}
+       * @return {!Promise} Resolves with value on success
        */,
-      'get': function(key){
+      'get_value': function(key){
         var value, this$ = this;
         value = this._values.get(key);
         if (value) {
@@ -431,7 +446,7 @@
             }
             for (i$ = 0, len$ = (ref$ = nodes).length; i$ < len$; ++i$) {
               node_id = ref$[i$];
-              this$._make_request(node_id, COMMAND_GET_VALUE, key, GET_VALUE_TIMEOUT).then(fn$)['catch'](done);
+              this$._make_request(node_id, COMMAND_GET_VALUE, key, GET_VALUE_TIMEOUT).then(fn$)['catch'](fn1$);
             }
             function fn$(data){
               var payload;
@@ -449,6 +464,10 @@
                   found = payload;
                 }
               }
+              done();
+            }
+            function fn1$(error){
+              error_handler(error);
               done();
             }
           });
@@ -475,47 +494,47 @@
       /**
        * @param {!Uint8Array} value
        *
-       * @return {!Uint8Array} Key
+       * @return {!Array<!Uint8Array>} `[key, data]`, can be published to DHT with `put_value()` method
        */,
-      'put_immutable': function(value){
+      'make_immutable_value': function(value){
         var key;
         key = blake2b_256(value);
-        this._values.add(key, value);
-        this._put(key, value);
-        return key;
-      }
-      /**
-       * @param {!Uint8Array} key
-       * @param {!Uint8Array} payload
-       */,
-      _put: function(key, payload){
-        var this$ = this;
-        this['lookup'](key).then(function(nodes){
-          var data, i$, len$, node_id, results$ = [];
-          if (!nodes.length) {
-            return;
-          }
-          data = compose_put_value_request(key, payload);
-          for (i$ = 0, len$ = nodes.length; i$ < len$; ++i$) {
-            node_id = nodes[i$];
-            results$.push(this$._make_request(node_id, COMMAND_PUT_VALUE, data, PUT_VALUE_TIMEOUT));
-          }
-          return results$;
-        });
+        return [key, value];
       }
       /**
        * @param {!Uint8Array}	public_key	Ed25519 public key, will be used as key for data
        * @param {!Uint8Array}	private_key	Ed25519 private key
        * @param {number}		version		Up to 32-bit number
        * @param {!Uint8Array}	value
+       *
+       * @return {!Array<!Uint8Array>} `[key, data]`, can be published to DHT with `put_value()` method
        */,
-      'put_mutable': function(public_key, private_key, version, value){
+      'make_mutable_value': function(public_key, private_key, version, value){
         var payload, signature, data;
         payload = compose_mutable_value(version, value);
         signature = create_signature(payload, public_key, private_key);
         data = concat_arrays([payload, signature]);
-        this._values.add(public_key, data);
-        this._put(public_key, data);
+        [public_key, data];
+      }
+      /**
+       * @param {!Uint8Array} key		As returned by `make_*_value()` methods
+       * @param {!Uint8Array} data	As returned by `make_*_value()` methods
+       */,
+      'put_value': function(key, data){
+        var this$ = this;
+        this._values.add(key, data);
+        this['lookup'](key).then(function(nodes){
+          var command_data, i$, len$, node_id, results$ = [];
+          if (!nodes.length) {
+            return;
+          }
+          command_data = compose_put_value_request(key, data);
+          for (i$ = 0, len$ = nodes.length; i$ < len$; ++i$) {
+            node_id = nodes[i$];
+            results$.push(this$._make_request(node_id, COMMAND_PUT_VALUE, command_data, PUT_VALUE_TIMEOUT));
+          }
+          return results$;
+        });
       },
       'destroy': function(){
         this._destroyed = true;
@@ -526,15 +545,15 @@
        * @param {!Uint8Array}	target_id
        * @param {number}		command
        * @param {!Uint8Array}	data
-       * @param {number}		timeout		In seconds
+       * @param {number}		request_timeout	In seconds
        *
        * @return {!Promise} Will resolve with data received from `target_id`'s response or will reject on timeout
        */,
-      _make_request: function(target_id, command, data, timeout){
+      _make_request: function(target_id, command, data, request_timeout){
         var promise, this$ = this;
         promise = new Promise(function(resolve, reject){
           var transaction_id, timeout;
-          transaction_id = this$._transactions_counter();
+          transaction_id = this$._generate_transaction_id();
           this$._transactions_in_progress.set(transaction_id, function(source_id, data){
             if (are_arrays_equal(target_id, source_id)) {
               clearTimeout(timeout);
@@ -543,7 +562,8 @@
               return resolve(data);
             }
           });
-          timeout = timeoutSet(timeout, function(){
+          timeout = timeoutSet(request_timeout, function(){
+            debugger;
             this$._transactions_in_progress['delete'](transaction_id);
             this$._timeouts['delete'](timeout);
             reject();
@@ -551,7 +571,7 @@
           this$._timeouts.add(timeout);
           this$._send(target_id, command, compose_payload(transaction_id, data));
         });
-        promise['catch'](function(){});
+        promise['catch'](error_handler);
         return promise;
       }
       /**
