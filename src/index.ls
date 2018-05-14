@@ -183,18 +183,17 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 	/**
 	 * @constructor
 	 *
-	 * @param {!Uint8Array}		dht_public_key						Own ID (Ed25519 public key)
-	 * @param {!Array<!Object>}	bootstrap_nodes						Array of objects with keys (all of them are required) `node_id`, `host` and `port`
-	 * @param {number}			bucket_size							Size of a bucket from Kademlia design
-	 * @param {number}			state_history_size					How many versions of local history will be kept
-	 * @param {number}			values_cache_size					How many values will be kept in cache
-	 * @param {number}			fraction_of_nodes_from_same_peer	Max fraction of nodes originated from single peer allowed on lookup start
+	 * @param {!Uint8Array}	dht_public_key						Own ID (Ed25519 public key)
+	 * @param {number}		bucket_size							Size of a bucket from Kademlia design
+	 * @param {number}		state_history_size					How many versions of local history will be kept
+	 * @param {number}		values_cache_size					How many values will be kept in cache
+	 * @param {number}		fraction_of_nodes_from_same_peer	Max fraction of nodes originated from single peer allowed on lookup start
 	 *
 	 * @return {!DHT}
 	 */
-	!function DHT (dht_public_key, bootstrap_nodes, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer = 0.2)
+	!function DHT (dht_public_key, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer = 0.2)
 		if !(@ instanceof DHT)
-			return new DHT(dht_public_key, bootstrap_nodes, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer)
+			return new DHT(dht_public_key, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer)
 		async-eventer.call(@)
 
 		@_dht						= es-dht(dht_public_key, blake2b_256, bucket_size, state_history_size, fraction_of_nodes_from_same_peer)
