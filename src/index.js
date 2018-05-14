@@ -5,7 +5,7 @@
  * @license 0BSD
  */
 (function(){
-  var ID_LENGTH, SIGNATURE_LENGTH, COMMAND_RESPONSE, COMMAND_GET_STATE, COMMAND_GET_PROOF, COMMAND_GET_VALUE, COMMAND_PUT_VALUE, GET_PROOF_REQUEST_TIMEOUT, GET_STATE_REQUEST_TIMEOUT, GET_VALUE_TIMEOUT, PUT_VALUE_TIMEOUT;
+  var ID_LENGTH, SIGNATURE_LENGTH, COMMAND_RESPONSE, COMMAND_GET_STATE, COMMAND_GET_PROOF, COMMAND_GET_VALUE, COMMAND_PUT_VALUE, GET_PROOF_REQUEST_TIMEOUT, GET_STATE_REQUEST_TIMEOUT, GET_VALUE_TIMEOUT, PUT_VALUE_TIMEOUT, STATE_UPDATE_INTERVAL;
   ID_LENGTH = 32;
   SIGNATURE_LENGTH = 64;
   COMMAND_RESPONSE = 0;
@@ -14,9 +14,10 @@
   COMMAND_GET_VALUE = 3;
   COMMAND_PUT_VALUE = 4;
   GET_PROOF_REQUEST_TIMEOUT = 5;
-  GET_STATE_REQUEST_TIMEOUT = 5;
+  GET_STATE_REQUEST_TIMEOUT = 10;
   GET_VALUE_TIMEOUT = 5;
   PUT_VALUE_TIMEOUT = 5;
+  STATE_UPDATE_INTERVAL = 15;
   /**
    * @param {!Uint8Array} state_version
    * @param {!Uint8Array} node_id
@@ -118,13 +119,14 @@
     return [key, payload];
   }
   function Wrapper(detoxCrypto, detoxUtils, asyncEventer, esDht){
-    var blake2b_256, create_signature, verify_signature, are_arrays_equal, concat_arrays, timeoutSet;
+    var blake2b_256, create_signature, verify_signature, are_arrays_equal, concat_arrays, timeoutSet, intervalSet;
     blake2b_256 = detoxCrypto['blake2b_256'];
     create_signature = detoxCrypto['sign'];
     verify_signature = detoxCrypto['verify'];
     are_arrays_equal = detoxUtils['are_arrays_equal'];
     concat_arrays = detoxUtils['concat_arrays'];
     timeoutSet = detoxUtils['timeoutSet'];
+    intervalSet = detoxUtils['intervalSet'];
     /**
      * @param {!Uint8Array}			state_version
      * @param {!Uint8Array}			proof
@@ -229,7 +231,7 @@
      * @return {!DHT}
      */
     function DHT(dht_public_key, bootstrap_nodes, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer){
-      var i$, len$, bootstrap_node;
+      var null_array, this$ = this;
       fraction_of_nodes_from_same_peer == null && (fraction_of_nodes_from_same_peer = 0.2);
       if (!(this instanceof DHT)) {
         return new DHT(dht_public_key, bootstrap_nodes, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer);
@@ -240,11 +242,54 @@
       this._transactions_in_progress = new Map;
       this._timeouts = new Set;
       this._values = Values_cache(values_cache_size);
-      for (i$ = 0, len$ = bootstrap_nodes.length; i$ < len$; ++i$) {
-        bootstrap_node = bootstrap_nodes[i$];
-      }
+      null_array = new Uint8Array(0);
+      this._state_update_interval = intervalSet(STATE_UPDATE_INTERVAL, function(){
+        var i$, ref$, len$, peer_id;
+        for (i$ = 0, len$ = (ref$ = this$['get_peers']()).length; i$ < len$; ++i$) {
+          peer_id = ref$[i$];
+          this$._make_request(peer_id, COMMAND_GET_STATE, null_array, GET_STATE_REQUEST_TIMEOUT).then(parse_get_state_response).then(fn$)['catch'](fn1$);
+        }
+        function fn$(arg$){
+          var state_version, proof, peers;
+          state_version = arg$[0], proof = arg$[1], peers = arg$[2];
+          if (!this$['set_peer'](peer_id, state_version, proof, peers)) {}
+        }
+        function fn1$(){}
+      });
     }
     DHT.prototype = {
+      /**
+       * @return {!Array<!Uint8Array>}
+       */
+      'get_peers': function(){
+        return this._dht['get_state'][2];
+      }
+      /**
+       * @param {!Uint8Array}			peer_id				Id of a peer
+       * @param {!Uint8Array}			peer_state_version	State version of a peer
+       * @param {!Uint8Array}			proof				Proof for specified state
+       * @param {!Array<!Uint8Array>}	peer_peers			Peer's peers that correspond to `state_version`
+       *
+       * @return {boolean} `false` if proof is not valid, returning `true` only means there was not errors, but peer was not necessarily added to k-bucket
+       *                   (use `has_peer()` method if confirmation of addition to k-bucket is needed)
+       */,
+      'set_peer': function(peer_id, peer_state_version, proof, peer_peers){
+        return this._dht['set_peer'](peer_id, peer_state_version, proof, peer_peers);
+      }
+      /**
+       * @param {!Uint8Array} node_id
+       *
+       * @return {boolean} `true` if node is our peer (stored in k-bucket)
+       */,
+      'has_peer': function(node_id){
+        return this._dht['has_peer'](node_id);
+      }
+      /**
+       * @param {!Uint8Array} peer_id Id of a peer
+       */,
+      'del_peer': function(peer_id){
+        this._dht['del_peer'](peer_id);
+      },
       'receive': function(source_id, command, payload){
         var ref$, transaction_id, data, callback, state, state_version, node_id, value, key;
         ref$ = parse_payload(payload), transaction_id = ref$[0], data = ref$[1];
@@ -278,19 +323,6 @@
             this._values.add(key, payload);
           }
         }
-      }
-      /**
-       * @param {!Uint8Array}	seed			Seed used to generate bootstrap node's keys (it may be different from `dht_public_key` in constructor for scalability purposes
-       * @param {string}		ip				IP on which to listen
-       * @param {number}		port			Port on which to listen
-       * @param {string=}		public_address	Publicly reachable address (can be IP or domain name) reachable
-       * @param {number=}		public_port		Port that corresponds to `public_address`
-       */,
-      'listen': function(seed, ip, port, public_address, public_port){
-        var keypair;
-        public_address == null && (public_address = ip);
-        public_port == null && (public_port = port);
-        return keypair = detoxCrypto['create_keypair'](seed);
       }
       /**
        * @param {!Uint8Array} id
@@ -364,12 +396,6 @@
        */,
       _connect_to: function(peer_peer_id, peer_id){
         return this['fire']('connect_to', peer_peer_id, peer_id);
-      }
-      /**
-       * @return {!Array<!Uint8Array>}
-       */,
-      'get_peers': function(){
-        return this._dht['get_state'][2];
       }
       /**
        * @param {!Uint8Array} key
@@ -473,10 +499,9 @@
           data = compose_put_value_request(key, payload);
           for (i$ = 0, len$ = nodes.length; i$ < len$; ++i$) {
             node_id = nodes[i$];
-            results$.push(this$._make_request(node_id, COMMAND_PUT_VALUE, data, PUT_VALUE_TIMEOUT)['catch'](fn$));
+            results$.push(this$._make_request(node_id, COMMAND_PUT_VALUE, data, PUT_VALUE_TIMEOUT));
           }
           return results$;
-          function fn$(){}
         });
       }
       /**
@@ -495,7 +520,8 @@
       },
       'destroy': function(){
         this._destroyed = true;
-        return this._timeouts.forEach(clearTimeout);
+        this._timeouts.forEach(clearTimeout);
+        return clearInterval(this._state_update_interval);
       }
       /**
        * @param {!Uint8Array}	target_id
@@ -506,8 +532,8 @@
        * @return {!Promise} Will resolve with data received from `target_id`'s response or will reject on timeout
        */,
       _make_request: function(target_id, command, data, timeout){
-        var this$ = this;
-        return new Promise(function(resolve, reject){
+        var promise, this$ = this;
+        promise = new Promise(function(resolve, reject){
           var transaction_id, timeout;
           transaction_id = this$._transactions_counter();
           this$._transactions_in_progress.set(transaction_id, function(source_id, data){
@@ -526,6 +552,8 @@
           this$._timeouts.add(timeout);
           this$._send(target_id, command, compose_payload(transaction_id, data));
         });
+        promise['catch'](function(){});
+        return promise;
       }
       /**
        * @param {!Uint8Array}	target_id

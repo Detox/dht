@@ -12,9 +12,11 @@ const COMMAND_GET_VALUE					= 3
 const COMMAND_PUT_VALUE					= 4
 # Would be nice to make these configurable on instance level
 const GET_PROOF_REQUEST_TIMEOUT			= 5
-const GET_STATE_REQUEST_TIMEOUT			= 5
+const GET_STATE_REQUEST_TIMEOUT			= 10
 const GET_VALUE_TIMEOUT					= 5
 const PUT_VALUE_TIMEOUT					= 5
+# TODO: This number will likely need to be tweaked
+const STATE_UPDATE_INTERVAL				= 15
 /**
  * @param {!Uint8Array} state_version
  * @param {!Uint8Array} node_id
@@ -105,6 +107,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 	are_arrays_equal	= detox-utils['are_arrays_equal']
 	concat_arrays		= detox-utils['concat_arrays']
 	timeoutSet			= detox-utils['timeoutSet']
+	intervalSet			= detox-utils['intervalSet']
 
 	/**
 	 * @param {!Uint8Array}			state_version
@@ -200,10 +203,47 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		@_transactions_in_progress	= new Map
 		@_timeouts					= new Set
 		@_values					= Values_cache(values_cache_size)
-		for bootstrap_node in bootstrap_nodes
-			void # TODO: Bootstrap
+		null_array					= new Uint8Array(0)
+		@_state_update_interval		= intervalSet(STATE_UPDATE_INTERVAL, !~>
+			# Periodically fetch latest state from all peers
+			for peer_id in @'get_peers'()
+				@_make_request(peer_id, COMMAND_GET_STATE, null_array, GET_STATE_REQUEST_TIMEOUT)
+					.then(parse_get_state_response)
+					.then ([state_version, proof, peers]) !~>
+						if !@'set_peer'(peer_id, state_version, proof, peers)
+							void # TODO: Drop connection on bad proof
+					.catch(->)
+		)
 
 	DHT:: =
+		/**
+		 * @return {!Array<!Uint8Array>}
+		 */
+		'get_peers' : ->
+			@_dht['get_state'][2]
+		/**
+		 * @param {!Uint8Array}			peer_id				Id of a peer
+		 * @param {!Uint8Array}			peer_state_version	State version of a peer
+		 * @param {!Uint8Array}			proof				Proof for specified state
+		 * @param {!Array<!Uint8Array>}	peer_peers			Peer's peers that correspond to `state_version`
+		 *
+		 * @return {boolean} `false` if proof is not valid, returning `true` only means there was not errors, but peer was not necessarily added to k-bucket
+		 *                   (use `has_peer()` method if confirmation of addition to k-bucket is needed)
+		 */
+		'set_peer' : (peer_id, peer_state_version, proof, peer_peers) ->
+			@_dht['set_peer'](peer_id, peer_state_version, proof, peer_peers)
+		/**
+		 * @param {!Uint8Array} node_id
+		 *
+		 * @return {boolean} `true` if node is our peer (stored in k-bucket)
+		 */
+		'has_peer' : (node_id) ->
+			@_dht['has_peer'](node_id)
+		/**
+		 * @param {!Uint8Array} peer_id Id of a peer
+		 */
+		'del_peer' : (peer_id) !->
+			@_dht['del_peer'](peer_id)
 		'receive' : (source_id, command, payload) !->
 			[transaction_id, data]	= parse_payload(payload)
 			switch command
@@ -228,16 +268,6 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					[key, payload]	= parse_put_value_request(data)
 					if are_arrays_equal(blake2b_256(payload), key) || @_verify_mutable_value(key, payload)
 						@_values.add(key, payload)
-		/**
-		 * @param {!Uint8Array}	seed			Seed used to generate bootstrap node's keys (it may be different from `dht_public_key` in constructor for scalability purposes
-		 * @param {string}		ip				IP on which to listen
-		 * @param {number}		port			Port on which to listen
-		 * @param {string=}		public_address	Publicly reachable address (can be IP or domain name) reachable
-		 * @param {number=}		public_port		Port that corresponds to `public_address`
-		 */
-		'listen' : (seed, ip, port, public_address = ip, public_port = port) ->
-			keypair	= detox-crypto['create_keypair'](seed)
-			# TODO
 		/**
 		 * @param {!Uint8Array} id
 		 *
@@ -293,11 +323,6 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 */
 		_connect_to : (peer_peer_id, peer_id) ->
 			@'fire'('connect_to', peer_peer_id, peer_id)
-		/**
-		 * @return {!Array<!Uint8Array>}
-		 */
-		'get_peers' : ->
-			@_dht['get_state'][2]
 		/**
 		 * @param {!Uint8Array} key
 		 *
@@ -382,7 +407,6 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 				data	= compose_put_value_request(key, payload)
 				for node_id in nodes
 					@_make_request(node_id, COMMAND_PUT_VALUE, data, PUT_VALUE_TIMEOUT)
-						.catch(->)
 		/**
 		 * @param {!Uint8Array}	public_key	Ed25519 public key, will be used as key for data
 		 * @param {!Uint8Array}	private_key	Ed25519 private key
@@ -399,6 +423,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 			# TODO: Check this property in relevant places
 			@_destroyed	= true
 			@_timeouts.forEach(clearTimeout)
+			clearInterval(@_state_update_interval)
 		/**
 		 * @param {!Uint8Array}	target_id
 		 * @param {number}		command
@@ -408,7 +433,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 * @return {!Promise} Will resolve with data received from `target_id`'s response or will reject on timeout
 		 */
 		_make_request : (target_id, command, data, timeout) ->
-			new Promise (resolve, reject) !~>
+			promise	= new Promise (resolve, reject) !~>
 				transaction_id	= @_transactions_counter()
 				@_transactions_in_progress.set(transaction_id, (source_id, data) ->
 					if are_arrays_equal(target_id, source_id)
@@ -424,6 +449,8 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 				)
 				@_timeouts.add(timeout)
 				@_send(target_id, command, compose_payload(transaction_id, data))
+			promise.catch(->)
+			promise
 		/**
 		 * @param {!Uint8Array}	target_id
 		 * @param {number}		transaction_id
