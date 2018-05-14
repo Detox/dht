@@ -48,7 +48,7 @@ function compose_payload (transaction_id, data)
 /**
  * @param {!Uint8Array} payload
  *
- * @return {!Array<!Uint8Array>} `[transaction_id, data]`
+ * @return {!Array} `[transaction_id, data]`
  */
 function parse_payload (payload)
 	view			= new DataView(payload.buffer, payload.byteOffset, payload.byteLength)
@@ -70,13 +70,32 @@ function compose_mutable_value (version, value)
 /**
  * @param {!Uint8Array} payload
  *
- * @return {!Array<!Uint8Array>} `[version, value]`
+ * @return {!Array} `[version, value]`
  */
 function parse_mutable_value (payload)
 	view	= new DataView(payload.buffer, payload.byteOffset, payload.byteLength)
 	version	= view.getUint32(0, false)
 	value	= payload.subarray(4)
 	[version, value]
+/**
+ * @param {!Uint8Array} key
+ * @param {!Uint8Array} payload
+ *
+ * @return {!Uint8Array}
+ */
+function compose_put_value_request (key, payload)
+	new Uint8Array(ID_LENGTH + payload.length)
+		..set(key)
+		..set(payload, ID_LENGTH)
+/**
+ * @param {!Uint8Array} data
+ *
+ * @return {!Array<!Uint8Array>} `[key, payload]`
+ */
+function parse_put_value_request (data)
+	key		= data.subarray(0, ID_LENGTH)
+	payload	= data.subarray(ID_LENGTH)
+	[key, payload]
 
 function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 	blake2b_256			= detox-crypto['blake2b_256']
@@ -200,6 +219,12 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 				case COMMAND_GET_VALUE
 					value	= @_values.get(data)
 					@_make_response(source_id, transaction_id, value || new Uint8Array(0))
+				case PUT_TIMEOUT
+					[key, payload]	= parse_put_value_request(data)
+					if are_arrays_equal(blake2b_256(payload, key))
+						@_values.add(key, payload)
+					else
+						# TODO
 		/**
 		 * @param {!Uint8Array}	seed			Seed used to generate bootstrap node's keys (it may be different from `dht_public_key` in constructor for scalability purposes
 		 * @param {string}		ip				IP on which to listen
@@ -280,6 +305,8 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 			if value
 				return Promise.resolve(value)
 			@'lookup'(key).then (nodes) ~>
+				if !nodes.length
+					return Promise.reject()
 				new Promise (resolve, reject) !~>
 					pending	= nodes.length
 					stop	= false
@@ -333,7 +360,12 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 			# TODO: Configurable data size limit
 			key	= blake2b_256(value)
 			@_values.add(key, value)
-			# TODO:
+			@'lookup'(key).then (nodes) ~>
+				if !nodes.length
+					return
+				for node_id in nodes
+					@_make_request(node_id, COMMAND_PUT_VALUE, compose_put_value_request(key, value), PUT_TIMEOUT)
+						.catch(->)
 			key
 		/**
 		 * @param {!Uint8Array}	public_key

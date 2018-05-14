@@ -57,7 +57,7 @@
   /**
    * @param {!Uint8Array} payload
    *
-   * @return {!Array<!Uint8Array>} `[transaction_id, data]`
+   * @return {!Array} `[transaction_id, data]`
    */
   function parse_payload(payload){
     var view, transaction_id, data;
@@ -83,7 +83,7 @@
   /**
    * @param {!Uint8Array} payload
    *
-   * @return {!Array<!Uint8Array>} `[version, value]`
+   * @return {!Array} `[version, value]`
    */
   function parse_mutable_value(payload){
     var view, version, value;
@@ -91,6 +91,30 @@
     version = view.getUint32(0, false);
     value = payload.subarray(4);
     return [version, value];
+  }
+  /**
+   * @param {!Uint8Array} key
+   * @param {!Uint8Array} payload
+   *
+   * @return {!Uint8Array}
+   */
+  function compose_put_value_request(key, payload){
+    var x$;
+    x$ = new Uint8Array(ID_LENGTH + payload.length);
+    x$.set(key);
+    x$.set(payload, ID_LENGTH);
+    return x$;
+  }
+  /**
+   * @param {!Uint8Array} data
+   *
+   * @return {!Array<!Uint8Array>} `[key, payload]`
+   */
+  function parse_put_value_request(data){
+    var key, payload;
+    key = data.subarray(0, ID_LENGTH);
+    payload = data.subarray(ID_LENGTH);
+    return [key, payload];
   }
   function Wrapper(detoxCrypto, detoxUtils, asyncEventer, esDht){
     var blake2b_256, verify_signature, are_arrays_equal, concat_arrays, timeoutSet;
@@ -220,7 +244,7 @@
     }
     DHT.prototype = {
       'receive': function(source_id, command, payload){
-        var ref$, transaction_id, data, callback, state, state_version, node_id, value;
+        var ref$, transaction_id, data, callback, state, state_version, node_id, value, key;
         ref$ = parse_payload(payload), transaction_id = ref$[0], data = ref$[1];
         switch (command) {
         case COMMAND_RESPONSE:
@@ -242,6 +266,12 @@
         case COMMAND_GET_VALUE:
           value = this._values.get(data);
           this._make_response(source_id, transaction_id, value || new Uint8Array(0));
+          break;
+        case PUT_TIMEOUT:
+          ref$ = parse_put_value_request(data), key = ref$[0], payload = ref$[1];
+          if (are_arrays_equal(blake2b_256(payload, key))) {
+            this._values.add(key, payload);
+          } else {}
         }
       }
       /**
@@ -348,6 +378,9 @@
           return Promise.resolve(value);
         }
         return this['lookup'](key).then(function(nodes){
+          if (!nodes.length) {
+            return Promise.reject();
+          }
           return new Promise(function(resolve, reject){
             var pending, stop, found, i$, ref$, len$, node_id;
             pending = nodes.length;
@@ -413,9 +446,21 @@
        * @return {!Uint8Array} Key
        */,
       'put_immutable': function(value){
-        var key;
+        var key, this$ = this;
         key = blake2b_256(value);
         this._values.add(key, value);
+        this['lookup'](key).then(function(nodes){
+          var i$, len$, node_id, results$ = [];
+          if (!nodes.length) {
+            return;
+          }
+          for (i$ = 0, len$ = nodes.length; i$ < len$; ++i$) {
+            node_id = nodes[i$];
+            results$.push(this$._make_request(node_id, COMMAND_PUT_VALUE, compose_put_value_request(key, value), PUT_TIMEOUT)['catch'](fn$));
+          }
+          return results$;
+          function fn$(){}
+        });
         return key;
       }
       /**
