@@ -222,11 +222,24 @@
       /**
        * @return {!Promise} Resolves with `local_connection_details`
        */,
-      _initiate_p2p_connection: function(){}
+      _initiate_p2p_connection: function(){
+        var data;
+        data = {
+          'connection_details': null
+        };
+        return this['fire']('initiate_connection', data).then(function(){
+          if (!data['connection_details']) {
+            throw '';
+          }
+          return data['connection_details'];
+        });
+      }
       /**
        * @return {!Promise}
        */,
-      _establish_p2p_connection: function(local_connection_details, remote_connection_details){}
+      _establish_p2p_connection: function(local_connection_details, remote_connection_details){
+        return this['fire']('establish_connection', local_connection_details, remote_connection_details);
+      }
       /**
        * @return {!Array<!Uint8Array>}
        */,

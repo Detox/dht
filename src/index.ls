@@ -184,12 +184,17 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 * @return {!Promise} Resolves with `local_connection_details`
 		 */
 		_initiate_p2p_connection : ->
-			# TODO
+			data	= {'connection_details' : null}
+			@'fire'('initiate_connection', data)
+				.then ->
+					if !data['connection_details']
+						throw ''
+					data['connection_details']
 		/**
 		 * @return {!Promise}
 		 */
 		_establish_p2p_connection : (local_connection_details, remote_connection_details) ->
-			# TODO
+			@'fire'('establish_connection', local_connection_details, remote_connection_details)
 		/**
 		 * @return {!Array<!Uint8Array>}
 		 */
