@@ -130,6 +130,7 @@
       this._dht = esDht(dht_public_key, hash_function, bucket_size, state_history_size, fraction_of_nodes_from_same_peer);
       this._transactions_counter = detoxUtils['random_int'](0, Math.pow(2, 16) - 1);
       this._transactions_in_progress = new Map;
+      this._timeouts = new Set;
       for (i$ = 0, len$ = bootstrap_nodes.length; i$ < len$; ++i$) {
         bootstrap_node = bootstrap_nodes[i$];
       }
@@ -248,7 +249,10 @@
        * @param {!Uint8Array} signature
        */,
       'put_mutable': function(public_key, data, signature){},
-      'destroy': function(){}
+      'destroy': function(){
+        this._destroyed = true;
+        return this._timeouts.forEach(clearTimeout);
+      }
       /**
        * @param {!Uint8Array}	target_id
        * @param {string}		command
@@ -260,13 +264,19 @@
       _make_request: function(target_id, command, data, timeout){
         var this$ = this;
         return new Promise(function(resolve, reject){
-          var transaction_id;
+          var transaction_id, timeout;
           transaction_id = this$._transactions_counter();
-          this$._transactions_in_progress.set(transaction_id, resolve);
-          timeoutSet(timeout, function(){
+          this$._transactions_in_progress.set(transaction_id, function(data){
+            clearTimeout(timeout);
+            this._timeouts['delete'](timeout);
+            return resolve(data);
+          });
+          timeout = timeoutSet(timeout, function(){
             reject();
             this$._transactions_in_progress['delete'](transaction_id);
+            this$._timeouts['delete'](timeout);
           });
+          this$._timeouts.add(timeout);
           this$['fire']('request', target_id, transaction_id, command, data);
         });
       }

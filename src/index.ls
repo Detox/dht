@@ -109,6 +109,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		# Start from random transaction number
 		@_transactions_counter		= detox-utils['random_int'](0, 2 ** 16 - 1)
 		@_transactions_in_progress	= new Map
+		@_timeouts					= new Set
 		for bootstrap_node in bootstrap_nodes
 			void # TODO: Bootstrap
 
@@ -212,6 +213,9 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 */
 		'put_mutable' : (public_key, data, signature) !->
 		'destroy' : ->
+			# TODO: Check this property in relevant places
+			@_destroyed	= true
+			@_timeouts.forEach(clearTimeout)
 		/**
 		 * @param {!Uint8Array}	target_id
 		 * @param {string}		command
@@ -223,11 +227,17 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		_make_request : (target_id, command, data, timeout) ->
 			new Promise (resolve, reject) !~>
 				transaction_id	= @_transactions_counter()
-				@_transactions_in_progress.set(transaction_id, resolve)
-				timeoutSet(timeout, !~>
+				@_transactions_in_progress.set(transaction_id, (data) ->
+					clearTimeout(timeout)
+					@_timeouts.delete(timeout)
+					resolve(data)
+				)
+				timeout = timeoutSet(timeout, !~>
 					reject()
 					@_transactions_in_progress.delete(transaction_id)
+					@_timeouts.delete(timeout)
 				)
+				@_timeouts.add(timeout)
 				@'fire'('request', target_id, transaction_id, command, data)
 		/**
 		 * @return {number} From range `[0, 2 ** 16)`
