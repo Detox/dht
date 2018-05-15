@@ -218,39 +218,6 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 
 	DHT:: =
 		/**
-		 * @return {!Uint8Array}
-		 */
-		'get_state' : ->
-			[state_version, proof, peers]	= @_dht['get_state']()
-			compose_get_state_response(state_version, proof, peers)
-		/**
-		 * @return {!Array<!Uint8Array>}
-		 */
-		'get_peers' : ->
-			@_dht['get_state']()[2]
-		/**
-		 * @param {!Uint8Array}	peer_id	Id of a peer
-		 * @param {!Uint8Array}	state	Peer's state generated with `get_state()` method
-		 *
-		 * @return {boolean} `false` if proof is not valid, returning `true` only means there was not errors, but peer was not necessarily added to k-bucket
-		 *                   (use `has_peer()` method if confirmation of addition to k-bucket is needed)
-		 */
-		'set_peer' : (peer_id, state) ->
-			[peer_state_version, proof, peer_peers]	= parse_get_state_response(state)
-			@_dht['set_peer'](peer_id, peer_state_version, proof, peer_peers)
-		/**
-		 * @param {!Uint8Array} node_id
-		 *
-		 * @return {boolean} `true` if node is our peer (stored in k-bucket)
-		 */
-		'has_peer' : (node_id) ->
-			@_dht['has_peer'](node_id)
-		/**
-		 * @param {!Uint8Array} peer_id Id of a peer
-		 */
-		'del_peer' : (peer_id) !->
-			@_dht['del_peer'](peer_id)
-		/**
 		 * @param {!Uint8Array}	source_id
 		 * @param {number}		command
 		 * @param {!Uint8Array}	payload
@@ -336,6 +303,39 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 */
 		_connect_to : (peer_peer_id, peer_id) ->
 			@'fire'('connect_to', peer_peer_id, peer_id)
+		/**
+		 * @return {!Uint8Array}
+		 */
+		'get_state' : ->
+			[state_version, proof, peers]	= @_dht['get_state']()
+			compose_get_state_response(state_version, proof, peers)
+		/**
+		 * @return {!Array<!Uint8Array>}
+		 */
+		'get_peers' : ->
+			@_dht['get_state']()[2]
+		/**
+		 * @param {!Uint8Array}	peer_id	Id of a peer
+		 * @param {!Uint8Array}	state	Peer's state generated with `get_state()` method
+		 *
+		 * @return {boolean} `false` if proof is not valid, returning `true` only means there was not errors, but peer was not necessarily added to k-bucket
+		 *                   (use `has_peer()` method if confirmation of addition to k-bucket is needed)
+		 */
+		'set_peer' : (peer_id, state) ->
+			[peer_state_version, proof, peer_peers]	= parse_get_state_response(state)
+			@_dht['set_peer'](peer_id, peer_state_version, proof, peer_peers)
+		/**
+		 * @param {!Uint8Array} node_id
+		 *
+		 * @return {boolean} `true` if node is our peer (stored in k-bucket)
+		 */
+		'has_peer' : (node_id) ->
+			@_dht['has_peer'](node_id)
+		/**
+		 * @param {!Uint8Array} peer_id Id of a peer
+		 */
+		'del_peer' : (peer_id) !->
+			@_dht['del_peer'](peer_id)
 		/**
 		 * @param {!Uint8Array} key
 		 *

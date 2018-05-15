@@ -259,50 +259,10 @@
     }
     DHT.prototype = {
       /**
-       * @return {!Uint8Array}
-       */
-      'get_state': function(){
-        var ref$, state_version, proof, peers;
-        ref$ = this._dht['get_state'](), state_version = ref$[0], proof = ref$[1], peers = ref$[2];
-        return compose_get_state_response(state_version, proof, peers);
-      }
-      /**
-       * @return {!Array<!Uint8Array>}
-       */,
-      'get_peers': function(){
-        return this._dht['get_state']()[2];
-      }
-      /**
-       * @param {!Uint8Array}	peer_id	Id of a peer
-       * @param {!Uint8Array}	state	Peer's state generated with `get_state()` method
-       *
-       * @return {boolean} `false` if proof is not valid, returning `true` only means there was not errors, but peer was not necessarily added to k-bucket
-       *                   (use `has_peer()` method if confirmation of addition to k-bucket is needed)
-       */,
-      'set_peer': function(peer_id, state){
-        var ref$, peer_state_version, proof, peer_peers;
-        ref$ = parse_get_state_response(state), peer_state_version = ref$[0], proof = ref$[1], peer_peers = ref$[2];
-        return this._dht['set_peer'](peer_id, peer_state_version, proof, peer_peers);
-      }
-      /**
-       * @param {!Uint8Array} node_id
-       *
-       * @return {boolean} `true` if node is our peer (stored in k-bucket)
-       */,
-      'has_peer': function(node_id){
-        return this._dht['has_peer'](node_id);
-      }
-      /**
-       * @param {!Uint8Array} peer_id Id of a peer
-       */,
-      'del_peer': function(peer_id){
-        this._dht['del_peer'](peer_id);
-      }
-      /**
        * @param {!Uint8Array}	source_id
        * @param {number}		command
        * @param {!Uint8Array}	payload
-       */,
+       */
       'receive': function(source_id, command, payload){
         var ref$, transaction_id, data, callback, state, state_version, proof, peers, node_id, value, key;
         ref$ = parse_payload(payload), transaction_id = ref$[0], data = ref$[1];
@@ -411,6 +371,46 @@
        */,
       _connect_to: function(peer_peer_id, peer_id){
         return this['fire']('connect_to', peer_peer_id, peer_id);
+      }
+      /**
+       * @return {!Uint8Array}
+       */,
+      'get_state': function(){
+        var ref$, state_version, proof, peers;
+        ref$ = this._dht['get_state'](), state_version = ref$[0], proof = ref$[1], peers = ref$[2];
+        return compose_get_state_response(state_version, proof, peers);
+      }
+      /**
+       * @return {!Array<!Uint8Array>}
+       */,
+      'get_peers': function(){
+        return this._dht['get_state']()[2];
+      }
+      /**
+       * @param {!Uint8Array}	peer_id	Id of a peer
+       * @param {!Uint8Array}	state	Peer's state generated with `get_state()` method
+       *
+       * @return {boolean} `false` if proof is not valid, returning `true` only means there was not errors, but peer was not necessarily added to k-bucket
+       *                   (use `has_peer()` method if confirmation of addition to k-bucket is needed)
+       */,
+      'set_peer': function(peer_id, state){
+        var ref$, peer_state_version, proof, peer_peers;
+        ref$ = parse_get_state_response(state), peer_state_version = ref$[0], proof = ref$[1], peer_peers = ref$[2];
+        return this._dht['set_peer'](peer_id, peer_state_version, proof, peer_peers);
+      }
+      /**
+       * @param {!Uint8Array} node_id
+       *
+       * @return {boolean} `true` if node is our peer (stored in k-bucket)
+       */,
+      'has_peer': function(node_id){
+        return this._dht['has_peer'](node_id);
+      }
+      /**
+       * @param {!Uint8Array} peer_id Id of a peer
+       */,
+      'del_peer': function(peer_id){
+        this._dht['del_peer'](peer_id);
       }
       /**
        * @param {!Uint8Array} key
