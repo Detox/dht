@@ -15,7 +15,7 @@
     ArrayMap = detoxUtils.ArrayMap;
     random_bytes = detoxUtils.random_bytes;
     test('Detox DHT', function(t){
-      var instances, nodes, bootstrap_node_id, bootstrap_node_instance, i$, node_a, index_a, node_b, index_b, node_c, index_c, immutable_value, ref$, key_immutable, data_immutable, mutable_keypair, mutable_value2, mutable_value, key_mutable, data_mutable, data_mutable2;
+      var instances, nodes, bootstrap_node_id, bootstrap_node_instance, i$, node_a, index_a, node_b, index_b, node_c, index_c, immutable_value, ref$, key_immutable, data_immutable, mutable_keypair, mutable_value, mutable_value2, key_mutable, data_mutable, data_mutable2;
       t.plan(12);
       console.log('Creating instances...');
       function DHT(id){
@@ -42,8 +42,8 @@
       ref$ = node_a.make_immutable_value(immutable_value), key_immutable = ref$[0], data_immutable = ref$[1];
       node_a.put_value(key_immutable, data_immutable);
       mutable_keypair = detoxCrypto.create_keypair();
-      mutable_value2 = random_bytes(10);
       mutable_value = random_bytes(10);
+      mutable_value2 = random_bytes(10);
       ref$ = node_a.make_mutable_value(mutable_keypair.ed25519['public'], mutable_keypair.ed25519['private'], 0, mutable_value), key_mutable = ref$[0], data_mutable = ref$[1];
       ref$ = node_a.make_mutable_value(mutable_keypair.ed25519['public'], mutable_keypair.ed25519['private'], 1, mutable_value2), key_mutable = ref$[0], data_mutable2 = ref$[1];
       node_a.put_value(key_mutable, data_mutable);

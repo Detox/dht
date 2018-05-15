@@ -50,8 +50,8 @@ test('Detox DHT', (t) !->
 	node_a.put_value(key_immutable, data_immutable)
 
 	mutable_keypair					= detox-crypto.create_keypair()
-	mutable_value2					= random_bytes(10)
 	mutable_value					= random_bytes(10)
+	mutable_value2					= random_bytes(10)
 	[key_mutable, data_mutable]		= node_a.make_mutable_value(mutable_keypair.ed25519.public, mutable_keypair.ed25519.private, 0, mutable_value)
 	[key_mutable, data_mutable2]	= node_a.make_mutable_value(mutable_keypair.ed25519.public, mutable_keypair.ed25519.private, 1, mutable_value2)
 	node_a.put_value(key_mutable, data_mutable)
