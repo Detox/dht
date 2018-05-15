@@ -301,6 +301,8 @@
           ref$ = parse_put_value_request(data), key = ref$[0], payload = ref$[1];
           if (are_arrays_equal(blake2b_256(payload), key) || this._verify_mutable_value(key, payload)) {
             this._values.add(key, payload);
+          } else {
+            this._peer_error(source_id);
           }
         }
       }
@@ -483,6 +485,10 @@
               if (stop) {
                 return;
               }
+              if (!data.length) {
+                done();
+                return;
+              }
               if (are_arrays_equal(blake2b_256(data), key)) {
                 stop = true;
                 resolve(data);
@@ -493,11 +499,14 @@
                 if (!found || found[0] < payload[0]) {
                   found = payload;
                 }
+              } else {
+                this$._peer_error(node_id);
               }
               done();
             }
             function fn1$(error){
               error_handler(error);
+              this._peer_warning(node_id);
               done();
             }
           });

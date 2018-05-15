@@ -249,6 +249,8 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					[key, payload]	= parse_put_value_request(data)
 					if are_arrays_equal(blake2b_256(payload), key) || @_verify_mutable_value(key, payload)
 						@_values.add(key, payload)
+					else
+						@_peer_error(source_id)
 		/**
 		 * @param {!Uint8Array} id
 		 *
@@ -398,6 +400,9 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 							.then (data) !~>
 								if stop
 									return
+								if !data.length # Node doesn't own requested value
+									done()
+									return
 								# Immutable values can be returned immediately
 								if are_arrays_equal(blake2b_256(data), key)
 									stop	:= true
@@ -408,9 +413,12 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 								if payload
 									if !found || found[0] < payload[0]
 										found	:= payload
+								else
+									@_peer_error(node_id)
 								done()
 							.catch (error) !->
 								error_handler(error)
+								@_peer_warning(node_id)
 								done()
 		/**
 		 * @param {!Uint8Array} key
