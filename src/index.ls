@@ -418,7 +418,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 *
 		 * @return {!Array<!Uint8Array>} `[key, data]`, can be published to DHT with `put_value()` method
 		 */
-		'make_mutable_value' : (public_key, private_key, version, value) !->
+		'make_mutable_value' : (public_key, private_key, version, value) ->
 			payload		= compose_mutable_value(version, value)
 			signature	= create_signature(payload, public_key, private_key)
 			data		= concat_arrays([payload, signature])

@@ -517,7 +517,7 @@
         payload = compose_mutable_value(version, value);
         signature = create_signature(payload, public_key, private_key);
         data = concat_arrays([payload, signature]);
-        [public_key, data];
+        return [public_key, data];
       }
       /**
        * @param {!Uint8Array} key		As returned by `make_*_value()` methods
