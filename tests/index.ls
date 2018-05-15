@@ -13,11 +13,14 @@ ArrayMap		= detox-utils.ArrayMap
 random_bytes	= detox-utils.random_bytes
 
 test('Detox DHT', (t) !->
-	t.plan(3)
+	t.plan(6)
 
 	console.log 'Creating instances...'
 	function DHT (id)
-		lib.DHT(id, 20, 1000, 1000)
+		instance	= lib.DHT(id, 20, 1000, 1000)
+			.on('connect_to', (peer_peer_id) !->
+				instance.set_peer(peer_peer_id, instances.get(peer_peer_id).get_state())
+			)
 			.on('send', (target_id, command, payload) !->
 				instances.get(target_id).receive(id, command, payload)
 			)
@@ -32,13 +35,14 @@ test('Detox DHT', (t) !->
 		instance	= DHT(id)
 		nodes.push(id)
 		instances.set(id, instance)
+		bootstrap_node_instance.set_peer(id, instance.get_state())
 		instance.set_peer(bootstrap_node_id, bootstrap_node_instance.get_state())
 
 	console.log 'Warm-up...'
 
-	node_a	= instances.get(nodes[Math.round(nodes.length * Math.random())])
-	node_b	= instances.get(nodes[Math.round(nodes.length * Math.random())])
-	node_c	= instances.get(nodes[Math.round(nodes.length * Math.random())])
+	node_a	= instances.get(nodes[index_a = Math.floor(nodes.length * Math.random())])
+	node_b	= instances.get(nodes[index_b = Math.floor(nodes.length * Math.random())])
+	node_c	= instances.get(nodes[index_c = Math.floor(nodes.length * Math.random())])
 
 	data		= random_bytes(10)
 	[key, data]	= node_a.make_immutable_value(data)
@@ -55,8 +59,14 @@ test('Detox DHT', (t) !->
 		.then (value) ->
 			t.equal(value.join(','), data.join(','), 'getting immutable data on node b succeeded')
 			node_c.get_value(key)
-		.then (value) !->
+		.then (value) ->
 			t.equal(value.join(','), data.join(','), 'getting immutable data on node c succeeded')
+			node_a.lookup(random_bytes(32))
+		.then (lookup_nodes) !->
+			t.ok(lookup_nodes.length >= 2 && lookup_nodes.length <= 20, 'Found at most 20 nodes on random lookup, but not less than 2')
+			t.ok(lookup_nodes[0] instanceof Uint8Array, 'Node has correct ID type')
+			t.equal(lookup_nodes[0].length, 32, 'Node has correct ID length')
+		.then !->
 			destroy()
 		.catch (e) !->
 			if e

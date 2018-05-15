@@ -307,7 +307,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 				!~function done
 					pending--
 					if !pending
-						@_handle_lookup(id, nodes_for_next_round)
+						@_handle_lookup(id, nodes_for_next_round).then(resolve)
 				for let [target_node_id, parent_node_id, parent_state_version] in nodes_to_connect_to
 					@_make_request(parent_node_id, COMMAND_GET_PROOF, compose_get_proof_request(parent_state_version, target_node_id), GET_PROOF_REQUEST_TIMEOUT)
 						.then (proof) !~>
@@ -362,10 +362,11 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 						if stop
 							return
 						pending--
-						if !found && !pending
-							reject()
-						else
-							resolve(found[1])
+						if !pending
+							if !found
+								reject()
+							else
+								resolve(found[1])
 					for node_id in nodes
 						@_make_request(node_id, COMMAND_GET_VALUE, key, GET_VALUE_TIMEOUT)
 							.then (data) !~>
@@ -393,10 +394,10 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 */
 		_verify_mutable_value : (key, data) ->
 			# Version is 4 bytes, so there should be at least 1 byte of useful payload
-			if value.length < (SIGNATURE_LENGTH + 5)
+			if data.length < (SIGNATURE_LENGTH + 5)
 				return null
-			payload		= value.subarray(0, value.length - SIGNATURE_LENGTH)
-			signature	= value.subarray(value.length - SIGNATURE_LENGTH)
+			payload		= data.subarray(0, data.length - SIGNATURE_LENGTH)
+			signature	= data.subarray(data.length - SIGNATURE_LENGTH)
 			if !verify_signature(signature, payload, key)
 				return null
 			parse_mutable_value(payload)

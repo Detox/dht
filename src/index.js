@@ -370,7 +370,7 @@
           function done(){
             pending--;
             if (!pending) {
-              this$._handle_lookup(id, nodes_for_next_round);
+              this$._handle_lookup(id, nodes_for_next_round).then(resolve);
             }
           }
           for (i$ = 0, len$ = (ref$ = nodes_to_connect_to).length; i$ < len$; ++i$) {
@@ -439,10 +439,12 @@
                 return;
               }
               pending--;
-              if (!found && !pending) {
-                reject();
-              } else {
-                resolve(found[1]);
+              if (!pending) {
+                if (!found) {
+                  reject();
+                } else {
+                  resolve(found[1]);
+                }
               }
             }
             for (i$ = 0, len$ = (ref$ = nodes).length; i$ < len$; ++i$) {
@@ -482,11 +484,11 @@
        */,
       _verify_mutable_value: function(key, data){
         var payload, signature;
-        if (value.length < SIGNATURE_LENGTH + 5) {
+        if (data.length < SIGNATURE_LENGTH + 5) {
           return null;
         }
-        payload = value.subarray(0, value.length - SIGNATURE_LENGTH);
-        signature = value.subarray(value.length - SIGNATURE_LENGTH);
+        payload = data.subarray(0, data.length - SIGNATURE_LENGTH);
+        signature = data.subarray(data.length - SIGNATURE_LENGTH);
         if (!verify_signature(signature, payload, key)) {
           return null;
         }

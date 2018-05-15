@@ -14,11 +14,14 @@
     ArrayMap = detoxUtils.ArrayMap;
     random_bytes = detoxUtils.random_bytes;
     test('Detox DHT', function(t){
-      var instances, nodes, bootstrap_node_id, bootstrap_node_instance, i$, node_a, node_b, node_c, data, ref$, key;
-      t.plan(3);
+      var instances, nodes, bootstrap_node_id, bootstrap_node_instance, i$, node_a, index_a, node_b, index_b, node_c, index_c, data, ref$, key;
+      t.plan(6);
       console.log('Creating instances...');
       function DHT(id){
-        return lib.DHT(id, 20, 1000, 1000).on('send', function(target_id, command, payload){
+        var instance;
+        return instance = lib.DHT(id, 20, 1000, 1000).on('connect_to', function(peer_peer_id){
+          instance.set_peer(peer_peer_id, instances.get(peer_peer_id).get_state());
+        }).on('send', function(target_id, command, payload){
           instances.get(target_id).receive(id, command, payload);
         });
       }
@@ -31,9 +34,9 @@
         (fn$.call(this, i$));
       }
       console.log('Warm-up...');
-      node_a = instances.get(nodes[Math.round(nodes.length * Math.random())]);
-      node_b = instances.get(nodes[Math.round(nodes.length * Math.random())]);
-      node_c = instances.get(nodes[Math.round(nodes.length * Math.random())]);
+      node_a = instances.get(nodes[index_a = Math.floor(nodes.length * Math.random())]);
+      node_b = instances.get(nodes[index_b = Math.floor(nodes.length * Math.random())]);
+      node_c = instances.get(nodes[index_c = Math.floor(nodes.length * Math.random())]);
       data = random_bytes(10);
       ref$ = node_a.make_immutable_value(data), key = ref$[0], data = ref$[1];
       node_a.put_value(key, data);
@@ -50,6 +53,12 @@
         return node_c.get_value(key);
       }).then(function(value){
         t.equal(value.join(','), data.join(','), 'getting immutable data on node c succeeded');
+        return node_a.lookup(random_bytes(32));
+      }).then(function(lookup_nodes){
+        t.ok(lookup_nodes.length >= 2 && lookup_nodes.length <= 20, 'Found at most 20 nodes on random lookup, but not less than 2');
+        t.ok(lookup_nodes[0] instanceof Uint8Array, 'Node has correct ID type');
+        t.equal(lookup_nodes[0].length, 32, 'Node has correct ID length');
+      }).then(function(){
         destroy();
       })['catch'](function(e){
         if (e) {
@@ -63,6 +72,7 @@
         instance = DHT(id);
         nodes.push(id);
         instances.set(id, instance);
+        bootstrap_node_instance.set_peer(id, instance.get_state());
         instance.set_peer(bootstrap_node_id, bootstrap_node_instance.get_state());
       }
     });
