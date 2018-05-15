@@ -24,6 +24,10 @@
           instance.set_peer(peer_peer_id, instances.get(peer_peer_id).get_state());
         }).on('send', function(target_id, command, payload){
           instances.get(target_id).receive(id, command, payload);
+        }).on('peer_warning', function(peer_id){
+          t.fail('Got warning about peer ' + Buffer.from(peer_id).toString('hex'));
+        }).on('peer_error', function(peer_id){
+          t.fail('Got error about peer ' + Buffer.from(peer_id).toString('hex'));
         });
       }
       instances = ArrayMap();

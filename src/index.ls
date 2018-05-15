@@ -212,8 +212,10 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					.then(parse_get_state_response)
 					.then ([state_version, proof, peers]) !~>
 						if !@'set_peer'(peer_id, state_version, proof, peers)
-							void # TODO: Drop connection on bad proof
-					.catch(error_handler)
+							@_peer_error(peer_id)
+					.catch (error) !->
+						error_handler(error)
+						@_peer_warning(peer_id)
 		)
 
 	DHT:: =
@@ -278,23 +280,47 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 				for let [target_node_id, parent_node_id, parent_state_version] in nodes_to_connect_to
 					@_make_request(parent_node_id, COMMAND_GET_PROOF, compose_get_proof_request(parent_state_version, target_node_id), GET_PROOF_REQUEST_TIMEOUT)
 						.then (proof) !~>
-							target_node_state_version	= @_dht['check_state_proof'](parent_state_version, parent_node_id, proof, target_node_id)
+							target_node_state_version	= @_dht['check_state_proof'](parent_state_version, proof, target_node_id)
 							if target_node_state_version
 								@_connect_to(target_node_id, parent_node_id).then ~>
 									@_make_request(target_node_id, COMMAND_GET_STATE, target_node_state_version, GET_STATE_REQUEST_TIMEOUT)
 										.then(parse_get_state_response)
 										.then ([state_version, proof, peers]) !~>
-											if @_dht['check_state_proof'](state_version, target_node_id, proof, target_node_id)
+											proof_check_result	= @_dht['check_state_proof'](state_version, proof, target_node_id)
+											if (
+												are_arrays_equal(target_node_state_version, state_version) &&
+												proof_check_result &&
+												are_arrays_equal(proof_check_result, target_node_id)
+											)
 												nodes_for_next_round	:= nodes_for_next_round.concat(
 													@_dht['update_lookup'](id, target_node_id, target_node_state_version, peers)
 												)
+											else
+												@_peer_error(target_node_id)
+											done()
+										.catch (error) !->
+											error_handler(error)
+											@_peer_warning(target_node_id)
 											done()
 							else
-								# TODO: Drop connection on bad proof (also take into account timeouts, since peer may just refuse to answer)
+								@_peer_error(parent_node_id)
 								done()
 						.catch (error) !->
 							error_handler(error)
+							@_peer_warning(parent_node_id)
 							done()
+		/**
+		 * @parm {!Uint8Array} peer_id
+		 */
+		_peer_error : (peer_id) !->
+			# Notify higher level about peer error, error is a strong indication of malicious node
+			@'fire'('peer_error', peer_id)
+		/**
+		 * @parm {!Uint8Array} peer_id
+		 */
+		_peer_warning : (peer_id) !->
+			# Notify higher level about peer warning, warning is a potential indication of malicious node
+			@'fire'('peer_warning', peer_id)
 		/**
 		 * @param {!Uint8Array}	peer_peer_id	Peer's peer ID
 		 * @param {!Uint8Array}	peer_id			Peer ID

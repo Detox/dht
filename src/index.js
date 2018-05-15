@@ -248,12 +248,18 @@
         var i$, ref$, len$, peer_id;
         for (i$ = 0, len$ = (ref$ = this$['get_peers']()).length; i$ < len$; ++i$) {
           peer_id = ref$[i$];
-          this$._make_request(peer_id, COMMAND_GET_STATE, null_array, GET_STATE_REQUEST_TIMEOUT).then(parse_get_state_response).then(fn$)['catch'](error_handler);
+          this$._make_request(peer_id, COMMAND_GET_STATE, null_array, GET_STATE_REQUEST_TIMEOUT).then(parse_get_state_response).then(fn$)['catch'](fn1$);
         }
         function fn$(arg$){
           var state_version, proof, peers;
           state_version = arg$[0], proof = arg$[1], peers = arg$[2];
-          if (!this$['set_peer'](peer_id, state_version, proof, peers)) {}
+          if (!this$['set_peer'](peer_id, state_version, proof, peers)) {
+            this$._peer_error(peer_id);
+          }
+        }
+        function fn1$(error){
+          error_handler(error);
+          this._peer_warning(peer_id);
         }
       });
     }
@@ -341,27 +347,48 @@
             target_node_id = arg$[0], parent_node_id = arg$[1], parent_state_version = arg$[2];
             this._make_request(parent_node_id, COMMAND_GET_PROOF, compose_get_proof_request(parent_state_version, target_node_id), GET_PROOF_REQUEST_TIMEOUT).then(function(proof){
               var target_node_state_version;
-              target_node_state_version = this$._dht['check_state_proof'](parent_state_version, parent_node_id, proof, target_node_id);
+              target_node_state_version = this$._dht['check_state_proof'](parent_state_version, proof, target_node_id);
               if (target_node_state_version) {
                 this$._connect_to(target_node_id, parent_node_id).then(function(){
                   return this$._make_request(target_node_id, COMMAND_GET_STATE, target_node_state_version, GET_STATE_REQUEST_TIMEOUT).then(parse_get_state_response).then(function(arg$){
-                    var state_version, proof, peers;
+                    var state_version, proof, peers, proof_check_result;
                     state_version = arg$[0], proof = arg$[1], peers = arg$[2];
-                    if (this$._dht['check_state_proof'](state_version, target_node_id, proof, target_node_id)) {
+                    proof_check_result = this$._dht['check_state_proof'](state_version, proof, target_node_id);
+                    if (are_arrays_equal(target_node_state_version, state_version) && proof_check_result && are_arrays_equal(proof_check_result, target_node_id)) {
                       nodes_for_next_round = nodes_for_next_round.concat(this$._dht['update_lookup'](id, target_node_id, target_node_state_version, peers));
+                    } else {
+                      this$._peer_error(target_node_id);
                     }
+                    done();
+                  })['catch'](function(error){
+                    error_handler(error);
+                    this._peer_warning(target_node_id);
                     done();
                   });
                 });
               } else {
+                this$._peer_error(parent_node_id);
                 done();
               }
             })['catch'](function(error){
               error_handler(error);
+              this._peer_warning(parent_node_id);
               done();
             });
           }
         });
+      }
+      /**
+       * @parm {!Uint8Array} peer_id
+       */,
+      _peer_error: function(peer_id){
+        this['fire']('peer_error', peer_id);
+      }
+      /**
+       * @parm {!Uint8Array} peer_id
+       */,
+      _peer_warning: function(peer_id){
+        this['fire']('peer_warning', peer_id);
       }
       /**
        * @param {!Uint8Array}	peer_peer_id	Peer's peer ID

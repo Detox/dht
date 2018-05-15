@@ -25,6 +25,12 @@ test('Detox DHT', (t) !->
 			.on('send', (target_id, command, payload) !->
 				instances.get(target_id).receive(id, command, payload)
 			)
+			.on('peer_warning', (peer_id) !->
+				t.fail('Got warning about peer ' + Buffer.from(peer_id).toString('hex'))
+			)
+			.on('peer_error', (peer_id) !->
+				t.fail('Got error about peer ' + Buffer.from(peer_id).toString('hex'))
+			)
 
 	instances				= ArrayMap()
 	nodes					= []
