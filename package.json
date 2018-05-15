@@ -18,6 +18,9 @@
 		"dist",
 		"src"
 	],
+	"scripts"         : {
+		"test" : "tape tests/**/*.js"
+	},
 	"dependencies"    : {
 		"@detox/crypto" : "^0.7.1",
 		"@detox/utils"  : "^1.9.0",
