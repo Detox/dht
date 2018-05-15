@@ -268,7 +268,8 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 						data	= null
 					state	= @_dht['get_state'](data)
 					if state
-						@_make_response(source_id, transaction_id, compose_get_state_response(state))
+						[state_version, proof, peers]	= state
+						@_make_response(source_id, transaction_id, compose_get_state_response(state_version, proof, peers))
 				case COMMAND_GET_PROOF
 					[state_version, node_id]	= parse_get_proof_request(data)
 					@_make_response(source_id, transaction_id, @_dht['get_state_proof'](state_version, node_id))
@@ -449,7 +450,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		_make_request : (target_id, command, data, request_timeout) ->
 			promise	= new Promise (resolve, reject) !~>
 				transaction_id	= @_generate_transaction_id()
-				@_transactions_in_progress.set(transaction_id, (source_id, data) ->
+				@_transactions_in_progress.set(transaction_id, (source_id, data) !~>
 					if are_arrays_equal(target_id, source_id)
 						clearTimeout(timeout)
 						@_timeouts.delete(timeout)
@@ -457,13 +458,13 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 						resolve(data)
 				)
 				timeout = timeoutSet(request_timeout, !~>
-					debugger
 					@_transactions_in_progress.delete(transaction_id)
 					@_timeouts.delete(timeout)
 					reject()
 				)
 				@_timeouts.add(timeout)
 				@_send(target_id, command, compose_payload(transaction_id, data))
+			# In case the code that made request doesn't expect response and didn't add `catch()` itself
 			promise.catch(error_handler)
 			promise
 		/**

@@ -304,7 +304,7 @@
        * @param {!Uint8Array}	payload
        */,
       'receive': function(source_id, command, payload){
-        var ref$, transaction_id, data, callback, state, state_version, node_id, value, key;
+        var ref$, transaction_id, data, callback, state, state_version, proof, peers, node_id, value, key;
         ref$ = parse_payload(payload), transaction_id = ref$[0], data = ref$[1];
         switch (command) {
         case COMMAND_RESPONSE:
@@ -319,7 +319,8 @@
           }
           state = this._dht['get_state'](data);
           if (state) {
-            this._make_response(source_id, transaction_id, compose_get_state_response(state));
+            state_version = state[0], proof = state[1], peers = state[2];
+            this._make_response(source_id, transaction_id, compose_get_state_response(state_version, proof, peers));
           }
           break;
         case COMMAND_GET_PROOF:
@@ -557,13 +558,12 @@
           this$._transactions_in_progress.set(transaction_id, function(source_id, data){
             if (are_arrays_equal(target_id, source_id)) {
               clearTimeout(timeout);
-              this._timeouts['delete'](timeout);
-              this._transactions_in_progress['delete'](transaction_id);
-              return resolve(data);
+              this$._timeouts['delete'](timeout);
+              this$._transactions_in_progress['delete'](transaction_id);
+              resolve(data);
             }
           });
           timeout = timeoutSet(request_timeout, function(){
-            debugger;
             this$._transactions_in_progress['delete'](transaction_id);
             this$._timeouts['delete'](timeout);
             reject();

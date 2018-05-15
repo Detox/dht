@@ -1,4 +1,4 @@
-# Detox DHT
+# Detox DHT [![Travis CI](https://img.shields.io/travis/Detox/dht/next.svg?label=Travis%20CI)](https://travis-ci.org/Detox/dht)
 You're on `next` branch right now. It is created for [major DHT reimplementation](https://github.com/Detox/dht/issues/1) instead of previous Mainline DHT-based, which was used on early stages in order to build MVP.
 
 `master` branch is where you can find version of `@detox/dht` that is published on NPM.
