@@ -15,7 +15,6 @@
 	"license"         : "0BSD",
 	"main"            : "src/index.js",
 	"files"           : [
-		"dist",
 		"src"
 	],
 	"scripts"         : {
@@ -25,7 +24,7 @@
 		"@detox/crypto" : "^0.7.1",
 		"@detox/utils"  : "^1.9.0",
 		"async-eventer" : "^1.1.6",
-		"es-dht"        : "^0.2.0"
+		"es-dht"        : "^0.2.1"
 	},
 	"devDependencies" : {
 		"build-gc" : "^0.1.1",
