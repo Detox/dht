@@ -449,31 +449,32 @@
       'get_value': function(key){
         var value, this$ = this;
         value = this._values.get(key);
-        if (value) {
-          return Promise.resolve(are_arrays_equal(blake2b_256(value), key)
-            ? value
-            : value.slice(4, value.length - SIGNATURE_LENGTH));
+        if (value && are_arrays_equal(blake2b_256(value), key)) {
+          return Promise.resolve(value);
         }
         return this['lookup'](key).then(function(nodes){
-          if (!nodes.length) {
-            return Promise.reject();
-          }
           return new Promise(function(resolve, reject){
             var pending, stop, found, i$, ref$, len$, node_id;
             pending = nodes.length;
             stop = false;
-            found = null;
+            found = value ? this$._verify_mutable_value(key, value) : null;
+            if (!nodes.length) {
+              finish();
+            }
             function done(){
               if (stop) {
                 return;
               }
               pending--;
               if (!pending) {
-                if (!found) {
-                  reject();
-                } else {
-                  resolve(found[1]);
-                }
+                finish();
+              }
+            }
+            function finish(){
+              if (!found) {
+                reject();
+              } else {
+                resolve(found[1]);
               }
             }
             for (i$ = 0, len$ = (ref$ = nodes).length; i$ < len$; ++i$) {
@@ -558,11 +559,13 @@
       /**
        * @param {!Uint8Array} key		As returned by `make_*_value()` methods
        * @param {!Uint8Array} data	As returned by `make_*_value()` methods
+       *
+       * @return {!Promise}
        */,
       'put_value': function(key, data){
         var this$ = this;
         this._values.add(key, data);
-        this['lookup'](key).then(function(nodes){
+        return this['lookup'](key).then(function(nodes){
           var command_data, i$, len$, node_id, results$ = [];
           if (!nodes.length) {
             return;

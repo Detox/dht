@@ -371,30 +371,31 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 */
 		'get_value' : (key) ->
 			value	= @_values.get(key)
-			if value
-				return Promise.resolve(
-					if are_arrays_equal(blake2b_256(value), key)
-						value
-					else
-						# First 4 bytes are version and last bytes are signature
-						value.slice(4, value.length - SIGNATURE_LENGTH)
-				)
+			# Return immutable value from cache immediately, but for mutable try to find never version first
+			if value && are_arrays_equal(blake2b_256(value), key)
+				return Promise.resolve(value)
 			@'lookup'(key).then (nodes) ~>
-				if !nodes.length
-					return Promise.reject()
 				new Promise (resolve, reject) !~>
 					pending	= nodes.length
 					stop	= false
-					found	= null
+					found	=
+						if value
+							@_verify_mutable_value(key, value)
+						else
+							null
+					if !nodes.length
+						finish()
 					!function done
 						if stop
 							return
 						pending--
 						if !pending
-							if !found
-								reject()
-							else
-								resolve(found[1])
+							finish()
+					!function finish
+						if !found
+							reject()
+						else
+							resolve(found[1])
 					for node_id in nodes
 						@_make_request(node_id, COMMAND_GET_VALUE, key, GET_VALUE_TIMEOUT)
 							.then (data) !~>
@@ -460,8 +461,10 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		/**
 		 * @param {!Uint8Array} key		As returned by `make_*_value()` methods
 		 * @param {!Uint8Array} data	As returned by `make_*_value()` methods
+		 *
+		 * @return {!Promise}
 		 */
-		'put_value' : (key, data) !->
+		'put_value' : (key, data) ->
 			@_values.add(key, data)
 			@'lookup'(key).then (nodes) ~>
 				if !nodes.length

@@ -73,7 +73,8 @@
         return node_c.get_value(key_mutable);
       }).then(function(value){
         t.equal(value.join(','), mutable_value.join(','), 'getting mutable value v0 on node c succeeded');
-        node_a.put_value(key_mutable, data_mutable2);
+        return node_a.put_value(key_mutable, data_mutable2);
+      }).then(function(){
         return node_a.get_value(key_mutable);
       }).then(function(value){
         t.equal(value.join(','), mutable_value2.join(','), 'getting mutable value v1 on node a succeeded');
