@@ -307,25 +307,25 @@
         }
       }
       /**
-       * @param {!Uint8Array} id
+       * @param {!Uint8Array} node_id
        *
-       * @return {!Promise}
+       * @return {!Promise} Resolves with `!Array<!Uint8Array>`
        */,
-      'lookup': function(id){
-        return this._handle_lookup(id, this._dht['start_lookup'](id));
+      'lookup': function(node_id){
+        return this._handle_lookup(node_id, this._dht['start_lookup'](node_id));
       }
       /**
-       * @param {!Uint8Array}					id
+       * @param {!Uint8Array}					node_id
        * @param {!Array<!Array<!Uint8Array>>}	nodes_to_connect_to
        *
        * @return {!Promise}
        */,
-      _handle_lookup: function(id, nodes_to_connect_to){
+      _handle_lookup: function(node_id, nodes_to_connect_to){
         var this$ = this;
         return new Promise(function(resolve, reject){
           var found_nodes, nodes_for_next_round, pending, i$, ref$, len$;
           if (!nodes_to_connect_to.length) {
-            found_nodes = this$._dht['finish_lookup'](id);
+            found_nodes = this$._dht['finish_lookup'](node_id);
             if (found_nodes) {
               resolve(found_nodes);
             } else {
@@ -338,7 +338,7 @@
           function done(){
             pending--;
             if (!pending) {
-              this$._handle_lookup(id, nodes_for_next_round).then(resolve);
+              this$._handle_lookup(node_id, nodes_for_next_round).then(resolve);
             }
           }
           for (i$ = 0, len$ = (ref$ = nodes_to_connect_to).length; i$ < len$; ++i$) {
@@ -357,7 +357,7 @@
                     state_version = arg$[0], proof = arg$[1], peers = arg$[2];
                     proof_check_result = this$._dht['check_state_proof'](state_version, proof, target_node_id);
                     if (are_arrays_equal(target_node_state_version, state_version) && proof_check_result && are_arrays_equal(proof_check_result, target_node_id)) {
-                      nodes_for_next_round = nodes_for_next_round.concat(this$._dht['update_lookup'](id, target_node_id, target_node_state_version, peers));
+                      nodes_for_next_round = nodes_for_next_round.concat(this$._dht['update_lookup'](node_id, target_node_id, target_node_state_version, peers));
                     } else {
                       this$._peer_error(target_node_id);
                     }

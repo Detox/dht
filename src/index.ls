@@ -252,22 +252,22 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					else
 						@_peer_error(peer_id)
 		/**
-		 * @param {!Uint8Array} id
+		 * @param {!Uint8Array} node_id
 		 *
-		 * @return {!Promise}
+		 * @return {!Promise} Resolves with `!Array<!Uint8Array>`
 		 */
-		'lookup' : (id) ->
-			@_handle_lookup(id, @_dht['start_lookup'](id))
+		'lookup' : (node_id) ->
+			@_handle_lookup(node_id, @_dht['start_lookup'](node_id))
 		/**
-		 * @param {!Uint8Array}					id
+		 * @param {!Uint8Array}					node_id
 		 * @param {!Array<!Array<!Uint8Array>>}	nodes_to_connect_to
 		 *
 		 * @return {!Promise}
 		 */
-		_handle_lookup : (id, nodes_to_connect_to) ->
+		_handle_lookup : (node_id, nodes_to_connect_to) ->
 			new Promise (resolve, reject) !~>
 				if !nodes_to_connect_to.length
-					found_nodes	= @_dht['finish_lookup'](id)
+					found_nodes	= @_dht['finish_lookup'](node_id)
 					if found_nodes
 						resolve(found_nodes)
 					else
@@ -278,7 +278,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 				!~function done
 					pending--
 					if !pending
-						@_handle_lookup(id, nodes_for_next_round).then(resolve)
+						@_handle_lookup(node_id, nodes_for_next_round).then(resolve)
 				for let [target_node_id, parent_node_id, parent_state_version] in nodes_to_connect_to
 					@_make_request(parent_node_id, COMMAND_GET_PROOF, compose_get_proof_request(parent_state_version, target_node_id), GET_PROOF_REQUEST_TIMEOUT)
 						.then (proof) !~>
@@ -295,7 +295,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 												are_arrays_equal(proof_check_result, target_node_id)
 											)
 												nodes_for_next_round	:= nodes_for_next_round.concat(
-													@_dht['update_lookup'](id, target_node_id, target_node_state_version, peers)
+													@_dht['update_lookup'](node_id, target_node_id, target_node_state_version, peers)
 												)
 											else
 												@_peer_error(target_node_id)
