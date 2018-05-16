@@ -14,7 +14,7 @@ ArrayMap		= detox-utils.ArrayMap
 random_bytes	= detox-utils.random_bytes
 
 test('Detox DHT', (t) !->
-	t.plan(12)
+	t.plan(16)
 
 	console.log 'Creating instances...'
 	function DHT (id)
@@ -61,6 +61,11 @@ test('Detox DHT', (t) !->
 	[key_mutable, data_mutable]		= node_a.make_mutable_value(mutable_keypair.ed25519.public, mutable_keypair.ed25519.private, 0, mutable_value)
 	[key_mutable, data_mutable2]	= node_a.make_mutable_value(mutable_keypair.ed25519.public, mutable_keypair.ed25519.private, 1, mutable_value2)
 	node_a.put_value(key_mutable, data_mutable)
+
+	t.equal(node_a.verify_value(key_immutable, data_immutable).join(','), immutable_value.join(','), 'Correct immutable value verification succeeded')
+	t.equal(node_a.verify_value(key_immutable, random_bytes(10)), null, 'Incorrect immutable value verification failed')
+	t.equal(node_a.verify_value(key_mutable, data_mutable).join(','), mutable_value.join(','), 'Correct mutable value verification succeeded #1')
+	t.equal(node_a.verify_value(key_mutable, data_mutable2).join(','), mutable_value2.join(','), 'Correct mutable value verification succeeded #2')
 
 	!function destroy
 		instances.forEach (instance) !->

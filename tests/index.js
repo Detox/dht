@@ -16,7 +16,7 @@
     random_bytes = detoxUtils.random_bytes;
     test('Detox DHT', function(t){
       var instances, nodes, bootstrap_node_id, bootstrap_node_instance, i$, node_a, index_a, node_b, index_b, node_c, index_c, immutable_value, ref$, key_immutable, data_immutable, mutable_keypair, mutable_value, mutable_value2, key_mutable, data_mutable, data_mutable2;
-      t.plan(12);
+      t.plan(16);
       console.log('Creating instances...');
       function DHT(id){
         var instance;
@@ -51,6 +51,10 @@
       ref$ = node_a.make_mutable_value(mutable_keypair.ed25519['public'], mutable_keypair.ed25519['private'], 0, mutable_value), key_mutable = ref$[0], data_mutable = ref$[1];
       ref$ = node_a.make_mutable_value(mutable_keypair.ed25519['public'], mutable_keypair.ed25519['private'], 1, mutable_value2), key_mutable = ref$[0], data_mutable2 = ref$[1];
       node_a.put_value(key_mutable, data_mutable);
+      t.equal(node_a.verify_value(key_immutable, data_immutable).join(','), immutable_value.join(','), 'Correct immutable value verification succeeded');
+      t.equal(node_a.verify_value(key_immutable, random_bytes(10)), null, 'Incorrect immutable value verification failed');
+      t.equal(node_a.verify_value(key_mutable, data_mutable).join(','), mutable_value.join(','), 'Correct mutable value verification succeeded #1');
+      t.equal(node_a.verify_value(key_mutable, data_mutable2).join(','), mutable_value2.join(','), 'Correct mutable value verification succeeded #2');
       function destroy(){
         instances.forEach(function(instance){
           instance.destroy();

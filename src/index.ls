@@ -247,7 +247,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					@_make_response(peer_id, transaction_id, value || new Uint8Array(0))
 				case COMMAND_PUT_VALUE
 					[key, payload]	= parse_put_value_request(data)
-					if are_arrays_equal(blake2b_256(payload), key) || @_verify_mutable_value(key, payload)
+					if @'verify_value'(key, payload)
 						@_values.add(key, payload)
 					else
 						@_peer_error(peer_id)
@@ -459,12 +459,28 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 			data		= concat_arrays([payload, signature])
 			[public_key, data]
 		/**
+		 * @param {!Uint8Array} key
+		 * @param {!Uint8Array} data
+		 *
+		 * @return {Uint8Array} `value` if correct data and `null` otherwise
+		 */
+		'verify_value' : (key, data) ->
+			if are_arrays_equal(blake2b_256(data), key)
+				return data
+			payload = @_verify_mutable_value(key, data)
+			if payload
+				payload[1]
+			else
+				null
+		/**
 		 * @param {!Uint8Array} key		As returned by `make_*_value()` methods
 		 * @param {!Uint8Array} data	As returned by `make_*_value()` methods
 		 *
 		 * @return {!Promise}
 		 */
 		'put_value' : (key, data) ->
+			if !@'verify_value'(key, data)
+				return Promise.reject()
 			@_values.add(key, data)
 			@'lookup'(key).then (peers) ~>
 				if !peers.length

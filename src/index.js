@@ -299,7 +299,7 @@
           break;
         case COMMAND_PUT_VALUE:
           ref$ = parse_put_value_request(data), key = ref$[0], payload = ref$[1];
-          if (are_arrays_equal(blake2b_256(payload), key) || this._verify_mutable_value(key, payload)) {
+          if (this['verify_value'](key, payload)) {
             this._values.add(key, payload);
           } else {
             this._peer_error(peer_id);
@@ -557,6 +557,24 @@
         return [public_key, data];
       }
       /**
+       * @param {!Uint8Array} key
+       * @param {!Uint8Array} data
+       *
+       * @return {Uint8Array} `value` if correct data and `null` otherwise
+       */,
+      'verify_value': function(key, data){
+        var payload;
+        if (are_arrays_equal(blake2b_256(data), key)) {
+          return data;
+        }
+        payload = this._verify_mutable_value(key, data);
+        if (payload) {
+          return payload[1];
+        } else {
+          return null;
+        }
+      }
+      /**
        * @param {!Uint8Array} key		As returned by `make_*_value()` methods
        * @param {!Uint8Array} data	As returned by `make_*_value()` methods
        *
@@ -564,6 +582,9 @@
        */,
       'put_value': function(key, data){
         var this$ = this;
+        if (!this['verify_value'](key, data)) {
+          return Promise.reject();
+        }
         this._values.add(key, data);
         return this['lookup'](key).then(function(peers){
           var command_data, i$, len$, peer_id, results$ = [];
