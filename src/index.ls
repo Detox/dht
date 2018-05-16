@@ -220,17 +220,17 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 
 	DHT:: =
 		/**
-		 * @param {!Uint8Array}	source_id
+		 * @param {!Uint8Array}	peer_id
 		 * @param {number}		command
 		 * @param {!Uint8Array}	payload
 		 */
-		'receive' : (source_id, command, payload) !->
+		'receive' : (peer_id, command, payload) !->
 			[transaction_id, data]	= parse_payload(payload)
 			switch command
 				case COMMAND_RESPONSE
 					callback	= @_transactions_in_progress.get(transaction_id)
 					if callback
-						callback(source_id, data)
+						callback(peer_id, data)
 				case COMMAND_GET_STATE
 					# Support for getting latest state version with empty state version request
 					if !data.length
@@ -238,19 +238,19 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					state	= @_dht['get_state'](data)
 					if state
 						[state_version, proof, peers]	= state
-						@_make_response(source_id, transaction_id, compose_get_state_response(state_version, proof, peers))
+						@_make_response(peer_id, transaction_id, compose_get_state_response(state_version, proof, peers))
 				case COMMAND_GET_PROOF
 					[state_version, node_id]	= parse_get_proof_request(data)
-					@_make_response(source_id, transaction_id, @_dht['get_state_proof'](state_version, node_id))
+					@_make_response(peer_id, transaction_id, @_dht['get_state_proof'](state_version, node_id))
 				case COMMAND_GET_VALUE
 					value	= @_values.get(data)
-					@_make_response(source_id, transaction_id, value || new Uint8Array(0))
+					@_make_response(peer_id, transaction_id, value || new Uint8Array(0))
 				case COMMAND_PUT_VALUE
 					[key, payload]	= parse_put_value_request(data)
 					if are_arrays_equal(blake2b_256(payload), key) || @_verify_mutable_value(key, payload)
 						@_values.add(key, payload)
 					else
-						@_peer_error(source_id)
+						@_peer_error(peer_id)
 		/**
 		 * @param {!Uint8Array} id
 		 *
@@ -374,16 +374,16 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 			# Return immutable value from cache immediately, but for mutable try to find never version first
 			if value && are_arrays_equal(blake2b_256(value), key)
 				return Promise.resolve(value)
-			@'lookup'(key).then (nodes) ~>
+			@'lookup'(key).then (peers) ~>
 				new Promise (resolve, reject) !~>
-					pending	= nodes.length
+					pending	= peers.length
 					stop	= false
 					found	=
 						if value
 							@_verify_mutable_value(key, value)
 						else
 							null
-					if !nodes.length
+					if !peers.length
 						finish()
 					!function done
 						if stop
@@ -396,8 +396,8 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 							reject()
 						else
 							resolve(found[1])
-					for node_id in nodes
-						@_make_request(node_id, COMMAND_GET_VALUE, key, GET_VALUE_TIMEOUT)
+					for peer_id in peers
+						@_make_request(peer_id, COMMAND_GET_VALUE, key, GET_VALUE_TIMEOUT)
 							.then (data) !~>
 								if stop
 									return
@@ -415,11 +415,11 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 									if !found || found[0] < payload[0]
 										found	:= payload
 								else
-									@_peer_error(node_id)
+									@_peer_error(peer_id)
 								done()
 							.catch (error) !->
 								error_handler(error)
-								@_peer_warning(node_id)
+								@_peer_warning(peer_id)
 								done()
 		/**
 		 * @param {!Uint8Array} key
@@ -466,30 +466,30 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 */
 		'put_value' : (key, data) ->
 			@_values.add(key, data)
-			@'lookup'(key).then (nodes) ~>
-				if !nodes.length
+			@'lookup'(key).then (peers) ~>
+				if !peers.length
 					return
 				command_data	= compose_put_value_request(key, data)
-				for node_id in nodes
-					@_make_request(node_id, COMMAND_PUT_VALUE, command_data, PUT_VALUE_TIMEOUT)
+				for peer_id in peers
+					@_make_request(peer_id, COMMAND_PUT_VALUE, command_data, PUT_VALUE_TIMEOUT)
 		'destroy' : ->
 			# TODO: Check this property in relevant places
 			@_destroyed	= true
 			@_timeouts.forEach(clearTimeout)
 			clearInterval(@_state_update_interval)
 		/**
-		 * @param {!Uint8Array}	target_id
+		 * @param {!Uint8Array}	peer_id
 		 * @param {number}		command
 		 * @param {!Uint8Array}	data
 		 * @param {number}		request_timeout	In seconds
 		 *
-		 * @return {!Promise} Will resolve with data received from `target_id`'s response or will reject on timeout
+		 * @return {!Promise} Will resolve with data received from `peer_id`'s response or will reject on timeout
 		 */
-		_make_request : (target_id, command, data, request_timeout) ->
+		_make_request : (peer_id, command, data, request_timeout) ->
 			promise	= new Promise (resolve, reject) !~>
 				transaction_id	= @_generate_transaction_id()
-				@_transactions_in_progress.set(transaction_id, (source_id, data) !~>
-					if are_arrays_equal(target_id, source_id)
+				@_transactions_in_progress.set(transaction_id, (peer_id, data) !~>
+					if are_arrays_equal(peer_id, peer_id)
 						clearTimeout(timeout)
 						@_timeouts.delete(timeout)
 						@_transactions_in_progress.delete(transaction_id)
@@ -501,17 +501,17 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					reject()
 				)
 				@_timeouts.add(timeout)
-				@_send(target_id, command, compose_payload(transaction_id, data))
+				@_send(peer_id, command, compose_payload(transaction_id, data))
 			# In case the code that made request doesn't expect response and didn't add `catch()` itself
 			promise.catch(error_handler)
 			promise
 		/**
-		 * @param {!Uint8Array}	target_id
+		 * @param {!Uint8Array}	peer_id
 		 * @param {number}		transaction_id
 		 * @param {!Uint8Array}	data
 		 */
-		_make_response : (target_id, transaction_id, data) !->
-			@_send(target_id, COMMAND_RESPONSE, compose_payload(transaction_id, data))
+		_make_response : (peer_id, transaction_id, data) !->
+			@_send(peer_id, COMMAND_RESPONSE, compose_payload(transaction_id, data))
 		/**
 		 * @return {number} From range `[0, 2 ** 16)`
 		 */
@@ -522,12 +522,12 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 				@_transactions_counter = 0
 			transaction_id
 		/**
-		 * @param {!Uint8Array} target_id
+		 * @param {!Uint8Array} peer_id
 		 * @param {!Uint8Array} command
 		 * @param {!Uint8Array} payload
 		 */
-		_send : (target_id, command, payload) !->
-			@'fire'('send', target_id, command, payload)
+		_send : (peer_id, command, payload) !->
+			@'fire'('send', peer_id, command, payload)
 
 	DHT:: = Object.assign(Object.create(async-eventer::), DHT::)
 	Object.defineProperty(DHT::, 'constructor', {value: DHT})

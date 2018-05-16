@@ -265,18 +265,18 @@
     }
     DHT.prototype = {
       /**
-       * @param {!Uint8Array}	source_id
+       * @param {!Uint8Array}	peer_id
        * @param {number}		command
        * @param {!Uint8Array}	payload
        */
-      'receive': function(source_id, command, payload){
+      'receive': function(peer_id, command, payload){
         var ref$, transaction_id, data, callback, state, state_version, proof, peers, node_id, value, key;
         ref$ = parse_payload(payload), transaction_id = ref$[0], data = ref$[1];
         switch (command) {
         case COMMAND_RESPONSE:
           callback = this._transactions_in_progress.get(transaction_id);
           if (callback) {
-            callback(source_id, data);
+            callback(peer_id, data);
           }
           break;
         case COMMAND_GET_STATE:
@@ -286,23 +286,23 @@
           state = this._dht['get_state'](data);
           if (state) {
             state_version = state[0], proof = state[1], peers = state[2];
-            this._make_response(source_id, transaction_id, compose_get_state_response(state_version, proof, peers));
+            this._make_response(peer_id, transaction_id, compose_get_state_response(state_version, proof, peers));
           }
           break;
         case COMMAND_GET_PROOF:
           ref$ = parse_get_proof_request(data), state_version = ref$[0], node_id = ref$[1];
-          this._make_response(source_id, transaction_id, this._dht['get_state_proof'](state_version, node_id));
+          this._make_response(peer_id, transaction_id, this._dht['get_state_proof'](state_version, node_id));
           break;
         case COMMAND_GET_VALUE:
           value = this._values.get(data);
-          this._make_response(source_id, transaction_id, value || new Uint8Array(0));
+          this._make_response(peer_id, transaction_id, value || new Uint8Array(0));
           break;
         case COMMAND_PUT_VALUE:
           ref$ = parse_put_value_request(data), key = ref$[0], payload = ref$[1];
           if (are_arrays_equal(blake2b_256(payload), key) || this._verify_mutable_value(key, payload)) {
             this._values.add(key, payload);
           } else {
-            this._peer_error(source_id);
+            this._peer_error(peer_id);
           }
         }
       }
@@ -452,13 +452,13 @@
         if (value && are_arrays_equal(blake2b_256(value), key)) {
           return Promise.resolve(value);
         }
-        return this['lookup'](key).then(function(nodes){
+        return this['lookup'](key).then(function(peers){
           return new Promise(function(resolve, reject){
-            var pending, stop, found, i$, ref$, len$, node_id;
-            pending = nodes.length;
+            var pending, stop, found, i$, ref$, len$, peer_id;
+            pending = peers.length;
             stop = false;
             found = value ? this$._verify_mutable_value(key, value) : null;
-            if (!nodes.length) {
+            if (!peers.length) {
               finish();
             }
             function done(){
@@ -477,9 +477,9 @@
                 resolve(found[1]);
               }
             }
-            for (i$ = 0, len$ = (ref$ = nodes).length; i$ < len$; ++i$) {
-              node_id = ref$[i$];
-              this$._make_request(node_id, COMMAND_GET_VALUE, key, GET_VALUE_TIMEOUT).then(fn$)['catch'](fn1$);
+            for (i$ = 0, len$ = (ref$ = peers).length; i$ < len$; ++i$) {
+              peer_id = ref$[i$];
+              this$._make_request(peer_id, COMMAND_GET_VALUE, key, GET_VALUE_TIMEOUT).then(fn$)['catch'](fn1$);
             }
             function fn$(data){
               var payload;
@@ -501,13 +501,13 @@
                   found = payload;
                 }
               } else {
-                this$._peer_error(node_id);
+                this$._peer_error(peer_id);
               }
               done();
             }
             function fn1$(error){
               error_handler(error);
-              this._peer_warning(node_id);
+              this._peer_warning(peer_id);
               done();
             }
           });
@@ -565,15 +565,15 @@
       'put_value': function(key, data){
         var this$ = this;
         this._values.add(key, data);
-        return this['lookup'](key).then(function(nodes){
-          var command_data, i$, len$, node_id, results$ = [];
-          if (!nodes.length) {
+        return this['lookup'](key).then(function(peers){
+          var command_data, i$, len$, peer_id, results$ = [];
+          if (!peers.length) {
             return;
           }
           command_data = compose_put_value_request(key, data);
-          for (i$ = 0, len$ = nodes.length; i$ < len$; ++i$) {
-            node_id = nodes[i$];
-            results$.push(this$._make_request(node_id, COMMAND_PUT_VALUE, command_data, PUT_VALUE_TIMEOUT));
+          for (i$ = 0, len$ = peers.length; i$ < len$; ++i$) {
+            peer_id = peers[i$];
+            results$.push(this$._make_request(peer_id, COMMAND_PUT_VALUE, command_data, PUT_VALUE_TIMEOUT));
           }
           return results$;
         });
@@ -584,20 +584,20 @@
         return clearInterval(this._state_update_interval);
       }
       /**
-       * @param {!Uint8Array}	target_id
+       * @param {!Uint8Array}	peer_id
        * @param {number}		command
        * @param {!Uint8Array}	data
        * @param {number}		request_timeout	In seconds
        *
-       * @return {!Promise} Will resolve with data received from `target_id`'s response or will reject on timeout
+       * @return {!Promise} Will resolve with data received from `peer_id`'s response or will reject on timeout
        */,
-      _make_request: function(target_id, command, data, request_timeout){
+      _make_request: function(peer_id, command, data, request_timeout){
         var promise, this$ = this;
         promise = new Promise(function(resolve, reject){
           var transaction_id, timeout;
           transaction_id = this$._generate_transaction_id();
-          this$._transactions_in_progress.set(transaction_id, function(source_id, data){
-            if (are_arrays_equal(target_id, source_id)) {
+          this$._transactions_in_progress.set(transaction_id, function(peer_id, data){
+            if (are_arrays_equal(peer_id, peer_id)) {
               clearTimeout(timeout);
               this$._timeouts['delete'](timeout);
               this$._transactions_in_progress['delete'](transaction_id);
@@ -610,18 +610,18 @@
             reject();
           });
           this$._timeouts.add(timeout);
-          this$._send(target_id, command, compose_payload(transaction_id, data));
+          this$._send(peer_id, command, compose_payload(transaction_id, data));
         });
         promise['catch'](error_handler);
         return promise;
       }
       /**
-       * @param {!Uint8Array}	target_id
+       * @param {!Uint8Array}	peer_id
        * @param {number}		transaction_id
        * @param {!Uint8Array}	data
        */,
-      _make_response: function(target_id, transaction_id, data){
-        this._send(target_id, COMMAND_RESPONSE, compose_payload(transaction_id, data));
+      _make_response: function(peer_id, transaction_id, data){
+        this._send(peer_id, COMMAND_RESPONSE, compose_payload(transaction_id, data));
       }
       /**
        * @return {number} From range `[0, 2 ** 16)`
@@ -636,12 +636,12 @@
         return transaction_id;
       }
       /**
-       * @param {!Uint8Array} target_id
+       * @param {!Uint8Array} peer_id
        * @param {!Uint8Array} command
        * @param {!Uint8Array} payload
        */,
-      _send: function(target_id, command, payload){
-        this['fire']('send', target_id, command, payload);
+      _send: function(peer_id, command, payload){
+        this['fire']('send', peer_id, command, payload);
       }
     };
     DHT.prototype = Object.assign(Object.create(asyncEventer.prototype), DHT.prototype);
