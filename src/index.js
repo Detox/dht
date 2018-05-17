@@ -385,6 +385,7 @@
        */,
       _peer_error: function(peer_id){
         this['fire']('peer_error', peer_id);
+        this['del_peer'](peer_id);
       }
       /**
        * @parm {!Uint8Array} peer_id
@@ -423,9 +424,13 @@
        *                   (use `has_peer()` method if confirmation of addition to k-bucket is needed)
        */,
       'set_peer': function(peer_id, state){
-        var ref$, peer_state_version, proof, peer_peers;
+        var ref$, peer_state_version, proof, peer_peers, result;
         ref$ = parse_get_state_response(state), peer_state_version = ref$[0], proof = ref$[1], peer_peers = ref$[2];
-        return this._dht['set_peer'](peer_id, peer_state_version, proof, peer_peers);
+        result = this._dht['set_peer'](peer_id, peer_state_version, proof, peer_peers);
+        if (!result) {
+          this._peer_error(peer_id);
+        }
+        return result;
       }
       /**
        * @param {!Uint8Array} node_id

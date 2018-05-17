@@ -315,13 +315,14 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 * @parm {!Uint8Array} peer_id
 		 */
 		_peer_error : (peer_id) !->
-			# Notify higher level about peer error, error is a strong indication of malicious node
+			# Notify higher level about peer error, error is a strong indication of malicious node, stop communicating immediately
 			@'fire'('peer_error', peer_id)
+			@'del_peer'(peer_id)
 		/**
 		 * @parm {!Uint8Array} peer_id
 		 */
 		_peer_warning : (peer_id) !->
-			# Notify higher level about peer warning, warning is a potential indication of malicious node
+			# Notify higher level about peer warning, warning is a potential indication of malicious node, but threshold must be implemented on higher level
 			@'fire'('peer_warning', peer_id)
 		/**
 		 * @param {!Uint8Array}	peer_peer_id	Peer's peer ID
@@ -351,7 +352,10 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 */
 		'set_peer' : (peer_id, state) ->
 			[peer_state_version, proof, peer_peers]	= parse_get_state_response(state)
-			@_dht['set_peer'](peer_id, peer_state_version, proof, peer_peers)
+			result	= @_dht['set_peer'](peer_id, peer_state_version, proof, peer_peers)
+			if !result
+				@_peer_error(peer_id)
+			result
 		/**
 		 * @param {!Uint8Array} node_id
 		 *
