@@ -250,19 +250,20 @@
       this._timeouts_in_progress = new Set;
       this._values = Values_cache(values_cache_size);
       this._state_update_interval = intervalSet(this._timeouts['STATE_UPDATE_INTERVAL'], function(){
-        var i$, ref$, len$, peer_id;
+        var i$, ref$, len$;
         for (i$ = 0, len$ = (ref$ = this$['get_peers']()).length; i$ < len$; ++i$) {
-          peer_id = ref$[i$];
-          this$._make_request(peer_id, COMMAND_GET_STATE, null_array, this$._timeouts['GET_STATE_REQUEST_TIMEOUT']).then(fn$)['catch'](fn1$);
+          (fn$.call(this$, ref$[i$]));
         }
-        function fn$(state){
-          if (!this$['set_peer'](peer_id, state)) {
-            this$._peer_error(peer_id);
-          }
-        }
-        function fn1$(error){
-          error_handler(error);
-          this._peer_warning(peer_id);
+        function fn$(peer_id){
+          var this$ = this;
+          this._make_request(peer_id, COMMAND_GET_STATE, null_array, this._timeouts['GET_STATE_REQUEST_TIMEOUT']).then(function(state){
+            if (!this$['set_peer'](peer_id, state)) {
+              this$._peer_error(peer_id);
+            }
+          })['catch'](function(error){
+            error_handler(error);
+            this._peer_warning(peer_id);
+          });
         }
       });
     }
@@ -286,7 +287,7 @@
           if (!data.length) {
             data = null;
           }
-          state = this._dht['get_state'](data);
+          state = this['get_state'](data);
           if (state) {
             this._make_response(peer_id, transaction_id, state);
           }
@@ -405,11 +406,14 @@
         return this['fire']('connect_to', peer_peer_id, peer_id);
       }
       /**
+       * @param {Uint8Array=} state_version	Specific state version or latest if `null`
+       *
        * @return {!Uint8Array}
        */,
-      'get_state': function(){
-        var ref$, state_version, proof, peers;
-        ref$ = this._dht['get_state'](), state_version = ref$[0], proof = ref$[1], peers = ref$[2];
+      'get_state': function(state_version){
+        var ref$, proof, peers;
+        state_version == null && (state_version = null);
+        ref$ = this._dht['get_state'](state_version), state_version = ref$[0], proof = ref$[1], peers = ref$[2];
         return compose_state(state_version, proof, peers);
       }
       /**

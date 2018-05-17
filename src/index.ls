@@ -210,7 +210,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		@_values					= Values_cache(values_cache_size)
 		@_state_update_interval		= intervalSet(@_timeouts['STATE_UPDATE_INTERVAL'], !~>
 			# Periodically fetch latest state from all peers
-			for peer_id in @'get_peers'()
+			for let peer_id in @'get_peers'()
 				@_make_request(peer_id, COMMAND_GET_STATE, null_array, @_timeouts['GET_STATE_REQUEST_TIMEOUT'])
 					.then (state) !~>
 						if !@'set_peer'(peer_id, state)
@@ -237,7 +237,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					# Support for getting latest state version with empty state version request
 					if !data.length
 						data	= null
-					state	= @_dht['get_state'](data)
+					state	= @'get_state'(data)
 					if state
 						@_make_response(peer_id, transaction_id, state)
 				case COMMAND_GET_PROOF
@@ -334,10 +334,12 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		_connect_to : (peer_peer_id, peer_id) ->
 			@'fire'('connect_to', peer_peer_id, peer_id)
 		/**
+		 * @param {Uint8Array=} state_version	Specific state version or latest if `null`
+		 *
 		 * @return {!Uint8Array}
 		 */
-		'get_state' : ->
-			[state_version, proof, peers]	= @_dht['get_state']()
+		'get_state' : (state_version = null) ->
+			[state_version, proof, peers]	= @_dht['get_state'](state_version)
 			compose_state(state_version, proof, peers)
 		/**
 		 * @return {!Array<!Uint8Array>}
