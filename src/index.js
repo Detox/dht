@@ -5,7 +5,7 @@
  * @license 0BSD
  */
 (function(){
-  var ID_LENGTH, SIGNATURE_LENGTH, COMMAND_RESPONSE, COMMAND_GET_STATE, COMMAND_GET_PROOF, COMMAND_GET_VALUE, COMMAND_PUT_VALUE, GET_PROOF_REQUEST_TIMEOUT, GET_STATE_REQUEST_TIMEOUT, GET_VALUE_TIMEOUT, PUT_VALUE_TIMEOUT, STATE_UPDATE_INTERVAL;
+  var ID_LENGTH, SIGNATURE_LENGTH, COMMAND_RESPONSE, COMMAND_GET_STATE, COMMAND_GET_PROOF, COMMAND_GET_VALUE, COMMAND_PUT_VALUE, DEFAULT_TIMEOUTS;
   ID_LENGTH = 32;
   SIGNATURE_LENGTH = 64;
   COMMAND_RESPONSE = 0;
@@ -13,11 +13,13 @@
   COMMAND_GET_PROOF = 2;
   COMMAND_GET_VALUE = 3;
   COMMAND_PUT_VALUE = 4;
-  GET_PROOF_REQUEST_TIMEOUT = 5;
-  GET_STATE_REQUEST_TIMEOUT = 10;
-  GET_VALUE_TIMEOUT = 5;
-  PUT_VALUE_TIMEOUT = 5;
-  STATE_UPDATE_INTERVAL = 15;
+  DEFAULT_TIMEOUTS = {
+    'GET_PROOF_REQUEST_TIMEOUT': 5,
+    'GET_STATE_REQUEST_TIMEOUT': 10,
+    'GET_VALUE_TIMEOUT': 5,
+    'PUT_VALUE_TIMEOUT': 5,
+    'STATE_UPDATE_INTERVAL': 15
+  };
   /**
    * @param {!Uint8Array} state_version
    * @param {!Uint8Array} node_id
@@ -223,32 +225,35 @@
     /**
      * @constructor
      *
-     * @param {!Uint8Array}	dht_public_key						Own ID (Ed25519 public key)
-     * @param {number}		bucket_size							Size of a bucket from Kademlia design
-     * @param {number}		state_history_size					How many versions of local history will be kept
-     * @param {number}		values_cache_size					How many values will be kept in cache
-     * @param {number}		fraction_of_nodes_from_same_peer	Max fraction of nodes originated from single peer allowed on lookup start
+     * @param {!Uint8Array}				dht_public_key						Own ID (Ed25519 public key)
+     * @param {number}					bucket_size							Size of a bucket from Kademlia design
+     * @param {number}					state_history_size					How many versions of local history will be kept
+     * @param {number}					values_cache_size					How many values will be kept in cache
+     * @param {number}					fraction_of_nodes_from_same_peer	Max fraction of nodes originated from single peer allowed on lookup start
+     * @param {!Object<string, number>}	timeouts							Various timeouts and intervals used internally
      *
      * @return {!DHT}
      */
-    function DHT(dht_public_key, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer){
+    function DHT(dht_public_key, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer, timeouts){
       var null_array, this$ = this;
       fraction_of_nodes_from_same_peer == null && (fraction_of_nodes_from_same_peer = 0.2);
+      timeouts == null && (timeouts = {});
       if (!(this instanceof DHT)) {
-        return new DHT(dht_public_key, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer);
+        return new DHT(dht_public_key, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer, timeouts);
       }
       asyncEventer.call(this);
+      this._timeouts = Object.assign({}, DEFAULT_TIMEOUTS, timeouts);
       this._dht = esDht(dht_public_key, blake2b_256, bucket_size, state_history_size, fraction_of_nodes_from_same_peer);
       this._transactions_counter = detoxUtils['random_int'](0, Math.pow(2, 16) - 1);
       this._transactions_in_progress = new Map;
-      this._timeouts = new Set;
+      this._timeouts_in_progress = new Set;
       this._values = Values_cache(values_cache_size);
       null_array = new Uint8Array(0);
-      this._state_update_interval = intervalSet(STATE_UPDATE_INTERVAL, function(){
+      this._state_update_interval = intervalSet(this._timeouts['STATE_UPDATE_INTERVAL'], function(){
         var i$, ref$, len$, peer_id;
         for (i$ = 0, len$ = (ref$ = this$['get_peers']()).length; i$ < len$; ++i$) {
           peer_id = ref$[i$];
-          this$._make_request(peer_id, COMMAND_GET_STATE, null_array, GET_STATE_REQUEST_TIMEOUT).then(parse_get_state_response).then(fn$)['catch'](fn1$);
+          this$._make_request(peer_id, COMMAND_GET_STATE, null_array, this$._timeouts['GET_STATE_REQUEST_TIMEOUT']).then(parse_get_state_response).then(fn$)['catch'](fn1$);
         }
         function fn$(arg$){
           var state_version, proof, peers;
@@ -347,12 +352,12 @@
           function fn$(arg$){
             var target_node_id, parent_node_id, parent_state_version, this$ = this;
             target_node_id = arg$[0], parent_node_id = arg$[1], parent_state_version = arg$[2];
-            this._make_request(parent_node_id, COMMAND_GET_PROOF, compose_get_proof_request(parent_state_version, target_node_id), GET_PROOF_REQUEST_TIMEOUT).then(function(proof){
+            this._make_request(parent_node_id, COMMAND_GET_PROOF, compose_get_proof_request(parent_state_version, target_node_id), this._timeouts['GET_PROOF_REQUEST_TIMEOUT']).then(function(proof){
               var target_node_state_version;
               target_node_state_version = this$._dht['check_state_proof'](parent_state_version, proof, target_node_id);
               if (target_node_state_version) {
                 this$._connect_to(target_node_id, parent_node_id).then(function(){
-                  return this$._make_request(target_node_id, COMMAND_GET_STATE, target_node_state_version, GET_STATE_REQUEST_TIMEOUT).then(parse_get_state_response).then(function(arg$){
+                  return this$._make_request(target_node_id, COMMAND_GET_STATE, target_node_state_version, this$._timeouts['GET_STATE_REQUEST_TIMEOUT']).then(parse_get_state_response).then(function(arg$){
                     var state_version, proof, peers, proof_check_result;
                     state_version = arg$[0], proof = arg$[1], peers = arg$[2];
                     proof_check_result = this$._dht['check_state_proof'](state_version, proof, target_node_id);
@@ -484,7 +489,7 @@
             }
             for (i$ = 0, len$ = (ref$ = peers).length; i$ < len$; ++i$) {
               peer_id = ref$[i$];
-              this$._make_request(peer_id, COMMAND_GET_VALUE, key, GET_VALUE_TIMEOUT).then(fn$)['catch'](fn1$);
+              this$._make_request(peer_id, COMMAND_GET_VALUE, key, this$._timeouts['GET_VALUE_TIMEOUT']).then(fn$)['catch'](fn1$);
             }
             function fn$(data){
               var payload;
@@ -599,14 +604,14 @@
           command_data = compose_put_value_request(key, data);
           for (i$ = 0, len$ = peers.length; i$ < len$; ++i$) {
             peer_id = peers[i$];
-            results$.push(this$._make_request(peer_id, COMMAND_PUT_VALUE, command_data, PUT_VALUE_TIMEOUT));
+            results$.push(this$._make_request(peer_id, COMMAND_PUT_VALUE, command_data, this$._timeouts['PUT_VALUE_TIMEOUT']));
           }
           return results$;
         });
       },
       'destroy': function(){
         this._destroyed = true;
-        this._timeouts.forEach(clearTimeout);
+        this._timeouts_in_progress.forEach(clearTimeout);
         return clearInterval(this._state_update_interval);
       }
       /**
@@ -625,17 +630,17 @@
           this$._transactions_in_progress.set(transaction_id, function(peer_id, data){
             if (are_arrays_equal(peer_id, peer_id)) {
               clearTimeout(timeout);
-              this$._timeouts['delete'](timeout);
+              this$._timeouts_in_progress['delete'](timeout);
               this$._transactions_in_progress['delete'](transaction_id);
               resolve(data);
             }
           });
           timeout = timeoutSet(request_timeout, function(){
             this$._transactions_in_progress['delete'](transaction_id);
-            this$._timeouts['delete'](timeout);
+            this$._timeouts_in_progress['delete'](timeout);
             reject();
           });
-          this$._timeouts.add(timeout);
+          this$._timeouts_in_progress.add(timeout);
           this$._send(peer_id, command, compose_payload(transaction_id, data));
         });
         promise['catch'](error_handler);

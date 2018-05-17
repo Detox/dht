@@ -3,20 +3,21 @@
  * @author  Nazar Mokrynskyi <nazar@mokrynskyi.com>
  * @license 0BSD
  */
-const ID_LENGTH							= 32
-const SIGNATURE_LENGTH					= 64
-const COMMAND_RESPONSE					= 0
-const COMMAND_GET_STATE					= 1
-const COMMAND_GET_PROOF					= 2
-const COMMAND_GET_VALUE					= 3
-const COMMAND_PUT_VALUE					= 4
-# Would be nice to make these configurable on instance level
-const GET_PROOF_REQUEST_TIMEOUT			= 5
-const GET_STATE_REQUEST_TIMEOUT			= 10
-const GET_VALUE_TIMEOUT					= 5
-const PUT_VALUE_TIMEOUT					= 5
-# TODO: This number will likely need to be tweaked
-const STATE_UPDATE_INTERVAL				= 15
+const ID_LENGTH			= 32
+const SIGNATURE_LENGTH	= 64
+const COMMAND_RESPONSE	= 0
+const COMMAND_GET_STATE	= 1
+const COMMAND_GET_PROOF	= 2
+const COMMAND_GET_VALUE	= 3
+const COMMAND_PUT_VALUE	= 4
+# In seconds
+const DEFAULT_TIMEOUTS	=
+	'GET_PROOF_REQUEST_TIMEOUT'	: 5
+	'GET_STATE_REQUEST_TIMEOUT'	: 10
+	'GET_VALUE_TIMEOUT'			: 5
+	'PUT_VALUE_TIMEOUT'			: 5
+	# TODO: This number will likely need to be tweaked
+	'STATE_UPDATE_INTERVAL'		: 15
 /**
  * @param {!Uint8Array} state_version
  * @param {!Uint8Array} node_id
@@ -185,30 +186,32 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 	/**
 	 * @constructor
 	 *
-	 * @param {!Uint8Array}	dht_public_key						Own ID (Ed25519 public key)
-	 * @param {number}		bucket_size							Size of a bucket from Kademlia design
-	 * @param {number}		state_history_size					How many versions of local history will be kept
-	 * @param {number}		values_cache_size					How many values will be kept in cache
-	 * @param {number}		fraction_of_nodes_from_same_peer	Max fraction of nodes originated from single peer allowed on lookup start
+	 * @param {!Uint8Array}				dht_public_key						Own ID (Ed25519 public key)
+	 * @param {number}					bucket_size							Size of a bucket from Kademlia design
+	 * @param {number}					state_history_size					How many versions of local history will be kept
+	 * @param {number}					values_cache_size					How many values will be kept in cache
+	 * @param {number}					fraction_of_nodes_from_same_peer	Max fraction of nodes originated from single peer allowed on lookup start
+	 * @param {!Object<string, number>}	timeouts							Various timeouts and intervals used internally
 	 *
 	 * @return {!DHT}
 	 */
-	!function DHT (dht_public_key, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer = 0.2)
+	!function DHT (dht_public_key, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer = 0.2, timeouts = {})
 		if !(@ instanceof DHT)
-			return new DHT(dht_public_key, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer)
+			return new DHT(dht_public_key, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer, timeouts)
 		async-eventer.call(@)
 
+		@_timeouts					= Object.assign({}, DEFAULT_TIMEOUTS, timeouts)
 		@_dht						= es-dht(dht_public_key, blake2b_256, bucket_size, state_history_size, fraction_of_nodes_from_same_peer)
 		# Start from random transaction number
 		@_transactions_counter		= detox-utils['random_int'](0, 2 ** 16 - 1)
 		@_transactions_in_progress	= new Map
-		@_timeouts					= new Set
+		@_timeouts_in_progress		= new Set
 		@_values					= Values_cache(values_cache_size)
 		null_array					= new Uint8Array(0)
-		@_state_update_interval		= intervalSet(STATE_UPDATE_INTERVAL, !~>
+		@_state_update_interval		= intervalSet(@_timeouts['STATE_UPDATE_INTERVAL'], !~>
 			# Periodically fetch latest state from all peers
 			for peer_id in @'get_peers'()
-				@_make_request(peer_id, COMMAND_GET_STATE, null_array, GET_STATE_REQUEST_TIMEOUT)
+				@_make_request(peer_id, COMMAND_GET_STATE, null_array, @_timeouts['GET_STATE_REQUEST_TIMEOUT'])
 					.then(parse_get_state_response)
 					.then ([state_version, proof, peers]) !~>
 						if !@'set_peer'(peer_id, state_version, proof, peers)
@@ -280,12 +283,12 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					if !pending
 						@_handle_lookup(node_id, nodes_for_next_round).then(resolve)
 				for let [target_node_id, parent_node_id, parent_state_version] in nodes_to_connect_to
-					@_make_request(parent_node_id, COMMAND_GET_PROOF, compose_get_proof_request(parent_state_version, target_node_id), GET_PROOF_REQUEST_TIMEOUT)
+					@_make_request(parent_node_id, COMMAND_GET_PROOF, compose_get_proof_request(parent_state_version, target_node_id), @_timeouts['GET_PROOF_REQUEST_TIMEOUT'])
 						.then (proof) !~>
 							target_node_state_version	= @_dht['check_state_proof'](parent_state_version, proof, target_node_id)
 							if target_node_state_version
 								@_connect_to(target_node_id, parent_node_id).then ~>
-									@_make_request(target_node_id, COMMAND_GET_STATE, target_node_state_version, GET_STATE_REQUEST_TIMEOUT)
+									@_make_request(target_node_id, COMMAND_GET_STATE, target_node_state_version, @_timeouts['GET_STATE_REQUEST_TIMEOUT'])
 										.then(parse_get_state_response)
 										.then ([state_version, proof, peers]) !~>
 											proof_check_result	= @_dht['check_state_proof'](state_version, proof, target_node_id)
@@ -401,7 +404,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 						else
 							resolve(found[1])
 					for peer_id in peers
-						@_make_request(peer_id, COMMAND_GET_VALUE, key, GET_VALUE_TIMEOUT)
+						@_make_request(peer_id, COMMAND_GET_VALUE, key, @_timeouts['GET_VALUE_TIMEOUT'])
 							.then (data) !~>
 								if stop
 									return
@@ -491,11 +494,11 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					return
 				command_data	= compose_put_value_request(key, data)
 				for peer_id in peers
-					@_make_request(peer_id, COMMAND_PUT_VALUE, command_data, PUT_VALUE_TIMEOUT)
+					@_make_request(peer_id, COMMAND_PUT_VALUE, command_data, @_timeouts['PUT_VALUE_TIMEOUT'])
 		'destroy' : ->
 			# TODO: Check this property in relevant places
 			@_destroyed	= true
-			@_timeouts.forEach(clearTimeout)
+			@_timeouts_in_progress.forEach(clearTimeout)
 			clearInterval(@_state_update_interval)
 		/**
 		 * @param {!Uint8Array}	peer_id
@@ -511,16 +514,16 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 				@_transactions_in_progress.set(transaction_id, (peer_id, data) !~>
 					if are_arrays_equal(peer_id, peer_id)
 						clearTimeout(timeout)
-						@_timeouts.delete(timeout)
+						@_timeouts_in_progress.delete(timeout)
 						@_transactions_in_progress.delete(transaction_id)
 						resolve(data)
 				)
 				timeout = timeoutSet(request_timeout, !~>
 					@_transactions_in_progress.delete(transaction_id)
-					@_timeouts.delete(timeout)
+					@_timeouts_in_progress.delete(timeout)
 					reject()
 				)
-				@_timeouts.add(timeout)
+				@_timeouts_in_progress.add(timeout)
 				@_send(peer_id, command, compose_payload(transaction_id, data))
 			# In case the code that made request doesn't expect response and didn't add `catch()` itself
 			promise.catch(error_handler)
