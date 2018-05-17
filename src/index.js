@@ -121,7 +121,7 @@
     return [key, payload];
   }
   function Wrapper(detoxCrypto, detoxUtils, asyncEventer, esDht){
-    var blake2b_256, create_signature, verify_signature, are_arrays_equal, concat_arrays, timeoutSet, intervalSet, ArrayMap, error_handler;
+    var blake2b_256, create_signature, verify_signature, are_arrays_equal, concat_arrays, timeoutSet, intervalSet, ArrayMap, error_handler, null_array;
     blake2b_256 = detoxCrypto['blake2b_256'];
     create_signature = detoxCrypto['sign'];
     verify_signature = detoxCrypto['verify'];
@@ -131,6 +131,7 @@
     intervalSet = detoxUtils['intervalSet'];
     ArrayMap = detoxUtils['ArrayMap'];
     error_handler = detoxUtils['error_handler'];
+    null_array = new Uint8Array(0);
     /**
      * @param {!Uint8Array}			state_version
      * @param {!Uint8Array}			proof
@@ -138,7 +139,7 @@
      *
      * @return {!Uint8Array}
      */
-    function compose_get_state_response(state_version, proof, peers){
+    function compose_state(state_version, proof, peers){
       var proof_height, x$;
       proof_height = proof.length / (ID_LENGTH + 1);
       peers = concat_arrays(peers);
@@ -154,14 +155,14 @@
      *
      * @return {!Array} `[state_version, proof, peers]`
      */
-    function parse_get_state_response(data){
+    function parse_state(data){
       var state_version, proof_height, proof_length, proof, peers, res$, i$, to$, i;
       state_version = data.subarray(0, ID_LENGTH);
       proof_height = data[ID_LENGTH] || 0;
       proof_length = proof_height * (ID_LENGTH + 1);
       proof = data.subarray(ID_LENGTH + 1, ID_LENGTH + 1 + proof_length);
       if (proof.length !== proof.length) {
-        proof = new Uint8Array(0);
+        proof = null_array;
       }
       peers = data.subarray(ID_LENGTH + 1 + proof_length);
       if (peers.length % ID_LENGTH) {
@@ -235,7 +236,7 @@
      * @return {!DHT}
      */
     function DHT(dht_public_key, bucket_size, state_history_size, values_cache_size, fraction_of_nodes_from_same_peer, timeouts){
-      var null_array, this$ = this;
+      var this$ = this;
       fraction_of_nodes_from_same_peer == null && (fraction_of_nodes_from_same_peer = 0.2);
       timeouts == null && (timeouts = {});
       if (!(this instanceof DHT)) {
@@ -248,17 +249,14 @@
       this._transactions_in_progress = new Map;
       this._timeouts_in_progress = new Set;
       this._values = Values_cache(values_cache_size);
-      null_array = new Uint8Array(0);
       this._state_update_interval = intervalSet(this._timeouts['STATE_UPDATE_INTERVAL'], function(){
         var i$, ref$, len$, peer_id;
         for (i$ = 0, len$ = (ref$ = this$['get_peers']()).length; i$ < len$; ++i$) {
           peer_id = ref$[i$];
-          this$._make_request(peer_id, COMMAND_GET_STATE, null_array, this$._timeouts['GET_STATE_REQUEST_TIMEOUT']).then(parse_get_state_response).then(fn$)['catch'](fn1$);
+          this$._make_request(peer_id, COMMAND_GET_STATE, null_array, this$._timeouts['GET_STATE_REQUEST_TIMEOUT']).then(fn$)['catch'](fn1$);
         }
-        function fn$(arg$){
-          var state_version, proof, peers;
-          state_version = arg$[0], proof = arg$[1], peers = arg$[2];
-          if (!this$['set_peer'](peer_id, state_version, proof, peers)) {
+        function fn$(state){
+          if (!this$['set_peer'](peer_id, state)) {
             this$._peer_error(peer_id);
           }
         }
@@ -275,7 +273,7 @@
        * @param {!Uint8Array}	payload
        */
       'receive': function(peer_id, command, payload){
-        var ref$, transaction_id, data, callback, state, state_version, proof, peers, node_id, value, key;
+        var ref$, transaction_id, data, callback, state, state_version, node_id, value, key;
         ref$ = parse_payload(payload), transaction_id = ref$[0], data = ref$[1];
         switch (command) {
         case COMMAND_RESPONSE:
@@ -290,8 +288,7 @@
           }
           state = this._dht['get_state'](data);
           if (state) {
-            state_version = state[0], proof = state[1], peers = state[2];
-            this._make_response(peer_id, transaction_id, compose_get_state_response(state_version, proof, peers));
+            this._make_response(peer_id, transaction_id, state);
           }
           break;
         case COMMAND_GET_PROOF:
@@ -300,7 +297,7 @@
           break;
         case COMMAND_GET_VALUE:
           value = this._values.get(data);
-          this._make_response(peer_id, transaction_id, value || new Uint8Array(0));
+          this._make_response(peer_id, transaction_id, value || null_array);
           break;
         case COMMAND_PUT_VALUE:
           ref$ = parse_put_value_request(data), key = ref$[0], payload = ref$[1];
@@ -357,7 +354,7 @@
               target_node_state_version = this$._dht['check_state_proof'](parent_state_version, proof, target_node_id);
               if (target_node_state_version) {
                 this$._connect_to(target_node_id, parent_node_id).then(function(){
-                  return this$._make_request(target_node_id, COMMAND_GET_STATE, target_node_state_version, this$._timeouts['GET_STATE_REQUEST_TIMEOUT']).then(parse_get_state_response).then(function(arg$){
+                  return this$._make_request(target_node_id, COMMAND_GET_STATE, target_node_state_version, this$._timeouts['GET_STATE_REQUEST_TIMEOUT']).then(parse_state).then(function(arg$){
                     var state_version, proof, peers, proof_check_result;
                     state_version = arg$[0], proof = arg$[1], peers = arg$[2];
                     proof_check_result = this$._dht['check_state_proof'](state_version, proof, target_node_id);
@@ -413,7 +410,7 @@
       'get_state': function(){
         var ref$, state_version, proof, peers;
         ref$ = this._dht['get_state'](), state_version = ref$[0], proof = ref$[1], peers = ref$[2];
-        return compose_get_state_response(state_version, proof, peers);
+        return compose_state(state_version, proof, peers);
       }
       /**
        * @return {!Array<!Uint8Array>}
@@ -430,7 +427,7 @@
        */,
       'set_peer': function(peer_id, state){
         var ref$, peer_state_version, proof, peer_peers, result;
-        ref$ = parse_get_state_response(state), peer_state_version = ref$[0], proof = ref$[1], peer_peers = ref$[2];
+        ref$ = parse_state(state), peer_state_version = ref$[0], proof = ref$[1], peer_peers = ref$[2];
         result = this._dht['set_peer'](peer_id, peer_state_version, proof, peer_peers);
         if (!result) {
           this._peer_error(peer_id);

@@ -111,6 +111,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 	intervalSet			= detox-utils['intervalSet']
 	ArrayMap			= detox-utils['ArrayMap']
 	error_handler		= detox-utils['error_handler']
+	null_array			= new Uint8Array(0)
 
 	/**
 	 * @param {!Uint8Array}			state_version
@@ -119,7 +120,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 	 *
 	 * @return {!Uint8Array}
 	 */
-	function compose_get_state_response (state_version, proof, peers)
+	function compose_state (state_version, proof, peers)
 		proof_height	= proof.length / (ID_LENGTH + 1)
 		peers			= concat_arrays(peers)
 		new Uint8Array(ID_LENGTH + 1 + proof.length + peers.length)
@@ -132,13 +133,13 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 	 *
 	 * @return {!Array} `[state_version, proof, peers]`
 	 */
-	function parse_get_state_response (data)
+	function parse_state (data)
 		state_version	= data.subarray(0, ID_LENGTH)
 		proof_height	= data[ID_LENGTH] || 0
 		proof_length	= proof_height * (ID_LENGTH + 1)
 		proof			= data.subarray(ID_LENGTH + 1, ID_LENGTH + 1 + proof_length)
 		if proof.length != proof.length
-			proof = new Uint8Array(0)
+			proof = null_array
 		peers			= data.subarray(ID_LENGTH + 1 + proof_length)
 		if peers.length % ID_LENGTH
 			peers	= []
@@ -207,14 +208,12 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		@_transactions_in_progress	= new Map
 		@_timeouts_in_progress		= new Set
 		@_values					= Values_cache(values_cache_size)
-		null_array					= new Uint8Array(0)
 		@_state_update_interval		= intervalSet(@_timeouts['STATE_UPDATE_INTERVAL'], !~>
 			# Periodically fetch latest state from all peers
 			for peer_id in @'get_peers'()
 				@_make_request(peer_id, COMMAND_GET_STATE, null_array, @_timeouts['GET_STATE_REQUEST_TIMEOUT'])
-					.then(parse_get_state_response)
-					.then ([state_version, proof, peers]) !~>
-						if !@'set_peer'(peer_id, state_version, proof, peers)
+					.then (state) !~>
+						if !@'set_peer'(peer_id, state)
 							@_peer_error(peer_id)
 					.catch (error) !->
 						error_handler(error)
@@ -240,14 +239,13 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 						data	= null
 					state	= @_dht['get_state'](data)
 					if state
-						[state_version, proof, peers]	= state
-						@_make_response(peer_id, transaction_id, compose_get_state_response(state_version, proof, peers))
+						@_make_response(peer_id, transaction_id, state)
 				case COMMAND_GET_PROOF
 					[state_version, node_id]	= parse_get_proof_request(data)
 					@_make_response(peer_id, transaction_id, @_dht['get_state_proof'](state_version, node_id))
 				case COMMAND_GET_VALUE
 					value	= @_values.get(data)
-					@_make_response(peer_id, transaction_id, value || new Uint8Array(0))
+					@_make_response(peer_id, transaction_id, value || null_array)
 				case COMMAND_PUT_VALUE
 					[key, payload]	= parse_put_value_request(data)
 					if @'verify_value'(key, payload)
@@ -289,7 +287,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 							if target_node_state_version
 								@_connect_to(target_node_id, parent_node_id).then ~>
 									@_make_request(target_node_id, COMMAND_GET_STATE, target_node_state_version, @_timeouts['GET_STATE_REQUEST_TIMEOUT'])
-										.then(parse_get_state_response)
+										.then(parse_state)
 										.then ([state_version, proof, peers]) !~>
 											proof_check_result	= @_dht['check_state_proof'](state_version, proof, target_node_id)
 											if (
@@ -340,7 +338,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 */
 		'get_state' : ->
 			[state_version, proof, peers]	= @_dht['get_state']()
-			compose_get_state_response(state_version, proof, peers)
+			compose_state(state_version, proof, peers)
 		/**
 		 * @return {!Array<!Uint8Array>}
 		 */
@@ -354,7 +352,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 *                   (use `has_peer()` method if confirmation of addition to k-bucket is needed)
 		 */
 		'set_peer' : (peer_id, state) ->
-			[peer_state_version, proof, peer_peers]	= parse_get_state_response(state)
+			[peer_state_version, proof, peer_peers]	= parse_state(state)
 			result	= @_dht['set_peer'](peer_id, peer_state_version, proof, peer_peers)
 			if !result
 				@_peer_error(peer_id)
