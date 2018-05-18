@@ -275,6 +275,9 @@
        */
       'receive': function(peer_id, command, payload){
         var ref$, transaction_id, data, callback, state, state_version, node_id, value, key;
+        if (this._destroyed) {
+          return;
+        }
         ref$ = parse_payload(payload), transaction_id = ref$[0], data = ref$[1];
         switch (command) {
         case COMMAND_RESPONSE:
@@ -315,6 +318,9 @@
        * @return {!Promise} Resolves with `!Array<!Uint8Array>`
        */,
       'lookup': function(node_id){
+        if (this._destroyed) {
+          return Promise.reject();
+        }
         return this._handle_lookup(node_id, this._dht['start_lookup'](node_id));
       }
       /**
@@ -325,6 +331,9 @@
        */,
       _handle_lookup: function(node_id, nodes_to_connect_to){
         var this$ = this;
+        if (this._destroyed) {
+          return Promise.reject();
+        }
         return new Promise(function(resolve, reject){
           var found_nodes, nodes_for_next_round, pending, i$, ref$, len$;
           if (!nodes_to_connect_to.length) {
@@ -413,6 +422,9 @@
       'get_state': function(state_version){
         var ref$, proof, peers;
         state_version == null && (state_version = null);
+        if (this._destroyed) {
+          return null_array;
+        }
         ref$ = this._dht['get_state'](state_version), state_version = ref$[0], proof = ref$[1], peers = ref$[2];
         return compose_state(state_version, proof, peers);
       }
@@ -420,6 +432,9 @@
        * @return {!Array<!Uint8Array>}
        */,
       'get_peers': function(){
+        if (this._destroyed) {
+          return [];
+        }
         return this._dht['get_state']()[2];
       }
       /**
@@ -431,6 +446,9 @@
        */,
       'set_peer': function(peer_id, state){
         var ref$, peer_state_version, proof, peer_peers, result;
+        if (this._destroyed) {
+          return false;
+        }
         ref$ = parse_state(state), peer_state_version = ref$[0], proof = ref$[1], peer_peers = ref$[2];
         result = this._dht['set_peer'](peer_id, peer_state_version, proof, peer_peers);
         if (!result) {
@@ -444,12 +462,18 @@
        * @return {boolean} `true` if node is our peer (stored in k-bucket)
        */,
       'has_peer': function(node_id){
+        if (this._destroyed) {
+          return false;
+        }
         return this._dht['has_peer'](node_id);
       }
       /**
        * @param {!Uint8Array} peer_id Id of a peer
        */,
       'del_peer': function(peer_id){
+        if (this._destroyed) {
+          return;
+        }
         this._dht['del_peer'](peer_id);
       }
       /**
@@ -459,6 +483,9 @@
        */,
       'get_value': function(key){
         var value, this$ = this;
+        if (this._destroyed) {
+          return Promise.reject();
+        }
         value = this._values.get(key);
         if (value && are_arrays_equal(blake2b_256(value), key)) {
           return Promise.resolve(value);
@@ -593,6 +620,9 @@
        */,
       'put_value': function(key, data){
         var this$ = this;
+        if (this._destroyed) {
+          return Promise.reject();
+        }
         if (!this['verify_value'](key, data)) {
           return Promise.reject();
         }
@@ -611,6 +641,9 @@
         });
       },
       'destroy': function(){
+        if (this._destroyed) {
+          return;
+        }
         this._destroyed = true;
         this._timeouts_in_progress.forEach(clearTimeout);
         return clearInterval(this._state_update_interval);

@@ -227,6 +227,8 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 * @param {!Uint8Array}	payload
 		 */
 		'receive' : (peer_id, command, payload) !->
+			if @_destroyed
+				return
 			[transaction_id, data]	= parse_payload(payload)
 			switch command
 				case COMMAND_RESPONSE
@@ -258,6 +260,8 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 * @return {!Promise} Resolves with `!Array<!Uint8Array>`
 		 */
 		'lookup' : (node_id) ->
+			if @_destroyed
+				return Promise.reject()
 			@_handle_lookup(node_id, @_dht['start_lookup'](node_id))
 		/**
 		 * @param {!Uint8Array}					node_id
@@ -266,6 +270,8 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 * @return {!Promise}
 		 */
 		_handle_lookup : (node_id, nodes_to_connect_to) ->
+			if @_destroyed
+				return Promise.reject()
 			new Promise (resolve, reject) !~>
 				if !nodes_to_connect_to.length
 					found_nodes	= @_dht['finish_lookup'](node_id)
@@ -339,12 +345,16 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 * @return {!Uint8Array}
 		 */
 		'get_state' : (state_version = null) ->
+			if @_destroyed
+				return null_array
 			[state_version, proof, peers]	= @_dht['get_state'](state_version)
 			compose_state(state_version, proof, peers)
 		/**
 		 * @return {!Array<!Uint8Array>}
 		 */
 		'get_peers' : ->
+			if @_destroyed
+				return []
 			@_dht['get_state']()[2]
 		/**
 		 * @param {!Uint8Array}	peer_id	Id of a peer
@@ -354,6 +364,8 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 *                   (use `has_peer()` method if confirmation of addition to k-bucket is needed)
 		 */
 		'set_peer' : (peer_id, state) ->
+			if @_destroyed
+				return false
 			[peer_state_version, proof, peer_peers]	= parse_state(state)
 			result	= @_dht['set_peer'](peer_id, peer_state_version, proof, peer_peers)
 			if !result
@@ -365,11 +377,15 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 * @return {boolean} `true` if node is our peer (stored in k-bucket)
 		 */
 		'has_peer' : (node_id) ->
+			if @_destroyed
+				return false
 			@_dht['has_peer'](node_id)
 		/**
 		 * @param {!Uint8Array} peer_id Id of a peer
 		 */
 		'del_peer' : (peer_id) !->
+			if @_destroyed
+				return
 			@_dht['del_peer'](peer_id)
 		/**
 		 * @param {!Uint8Array} key
@@ -377,6 +393,8 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 * @return {!Promise} Resolves with value on success
 		 */
 		'get_value' : (key) ->
+			if @_destroyed
+				return Promise.reject()
 			value	= @_values.get(key)
 			# Return immutable value from cache immediately, but for mutable try to find never version first
 			if value && are_arrays_equal(blake2b_256(value), key)
@@ -486,6 +504,8 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 * @return {!Promise}
 		 */
 		'put_value' : (key, data) ->
+			if @_destroyed
+				return Promise.reject()
 			if !@'verify_value'(key, data)
 				return Promise.reject()
 			@_values.add(key, data)
@@ -496,7 +516,8 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 				for peer_id in peers
 					@_make_request(peer_id, COMMAND_PUT_VALUE, command_data, @_timeouts['PUT_VALUE_TIMEOUT'])
 		'destroy' : ->
-			# TODO: Check this property in relevant places
+			if @_destroyed
+				return
 			@_destroyed	= true
 			@_timeouts_in_progress.forEach(clearTimeout)
 			clearInterval(@_state_update_interval)
