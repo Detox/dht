@@ -1,4 +1,4 @@
-# Detox DHT [![Travis CI](https://img.shields.io/travis/Detox/dht/next.svg?label=Travis%20CI)](https://travis-ci.org/Detox/dht)
+# Detox DHT [![Travis CI](https://img.shields.io/travis/Detox/dht/master.svg?label=Travis%20CI)](https://travis-ci.org/Detox/dht)
 DHT implementation for Detox project.
 
 DHT with simple API that allows to make lookups and put immutable/mutable values into DHT.
