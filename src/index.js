@@ -5,7 +5,7 @@
  * @license 0BSD
  */
 (function(){
-  var ID_LENGTH, SIGNATURE_LENGTH, COMMAND_RESPONSE, COMMAND_GET_STATE, COMMAND_GET_PROOF, COMMAND_GET_VALUE, COMMAND_PUT_VALUE, DEFAULT_TIMEOUTS;
+  var ID_LENGTH, SIGNATURE_LENGTH, COMMAND_RESPONSE, COMMAND_GET_STATE, COMMAND_GET_PROOF, COMMAND_GET_VALUE, COMMAND_PUT_VALUE, DEFAULT_TIMEOUTS, MAX_VALUE_LENGTH;
   ID_LENGTH = 32;
   SIGNATURE_LENGTH = 64;
   COMMAND_RESPONSE = 0;
@@ -20,6 +20,7 @@
     'PUT_VALUE_TIMEOUT': 5,
     'STATE_UPDATE_INTERVAL': 15
   };
+  MAX_VALUE_LENGTH = 1024;
   /**
    * @param {!Uint8Array} state_version
    * @param {!Uint8Array} node_id
@@ -572,10 +573,13 @@
       /**
        * @param {!Uint8Array} value
        *
-       * @return {!Array<!Uint8Array>} `[key, data]`, can be published to DHT with `put_value()` method
+       * @return {Array<!Uint8Array>} `[key, data]`, can be published to DHT with `put_value()` method or `null` if value is too big to be stored in DHT
        */,
       'make_immutable_value': function(value){
         var key;
+        if (value.length > MAX_VALUE_LENGTH) {
+          return null;
+        }
         key = blake2b_256(value);
         return [key, value];
       }
@@ -585,10 +589,13 @@
        * @param {number}		version		Up to 32-bit number
        * @param {!Uint8Array}	value
        *
-       * @return {!Array<!Uint8Array>} `[key, data]`, can be published to DHT with `put_value()` method
+       * @return {Array<!Uint8Array>} `[key, data]`, can be published to DHT with `put_value()` method or `null` if value is too big to be stored in DHT
        */,
       'make_mutable_value': function(public_key, private_key, version, value){
         var payload, signature, data;
+        if (value.length > MAX_VALUE_LENGTH) {
+          return null;
+        }
         payload = compose_mutable_value(version, value);
         signature = create_signature(payload, public_key, private_key);
         data = concat_arrays([payload, signature]);
@@ -602,11 +609,11 @@
        */,
       'verify_value': function(key, data){
         var payload;
-        if (are_arrays_equal(blake2b_256(data), key)) {
+        if (are_arrays_equal(blake2b_256(data), key) && data.length <= MAX_VALUE_LENGTH) {
           return data;
         }
         payload = this._verify_mutable_value(key, data);
-        if (payload) {
+        if (payload && payload[1].length <= MAX_VALUE_LENGTH) {
           return payload[1];
         } else {
           return null;
@@ -715,7 +722,8 @@
     });
     return {
       'ready': detoxCrypto['ready'],
-      'DHT': DHT
+      'DHT': DHT,
+      'MAX_VALUE_LENGTH': MAX_VALUE_LENGTH
     };
   }
   if (typeof define === 'function' && define['amd']) {

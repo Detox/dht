@@ -18,6 +18,8 @@ const DEFAULT_TIMEOUTS	=
 	'PUT_VALUE_TIMEOUT'			: 5
 	# TODO: This number will likely need to be tweaked
 	'STATE_UPDATE_INTERVAL'		: 15
+# Allow up to 1 KiB of data to be stored as mutable or immutable value in DHT
+const MAX_VALUE_LENGTH	= 1024
 /**
  * @param {!Uint8Array} state_version
  * @param {!Uint8Array} node_id
@@ -464,10 +466,11 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		/**
 		 * @param {!Uint8Array} value
 		 *
-		 * @return {!Array<!Uint8Array>} `[key, data]`, can be published to DHT with `put_value()` method
+		 * @return {Array<!Uint8Array>} `[key, data]`, can be published to DHT with `put_value()` method or `null` if value is too big to be stored in DHT
 		 */
 		'make_immutable_value' : (value) ->
-			# TODO: Configurable data size limit
+			if value.length > MAX_VALUE_LENGTH
+				return null
 			key	= blake2b_256(value)
 			[key, value]
 		/**
@@ -476,9 +479,11 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 * @param {number}		version		Up to 32-bit number
 		 * @param {!Uint8Array}	value
 		 *
-		 * @return {!Array<!Uint8Array>} `[key, data]`, can be published to DHT with `put_value()` method
+		 * @return {Array<!Uint8Array>} `[key, data]`, can be published to DHT with `put_value()` method or `null` if value is too big to be stored in DHT
 		 */
 		'make_mutable_value' : (public_key, private_key, version, value) ->
+			if value.length > MAX_VALUE_LENGTH
+				return null
 			payload		= compose_mutable_value(version, value)
 			signature	= create_signature(payload, public_key, private_key)
 			data		= concat_arrays([payload, signature])
@@ -490,10 +495,10 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 * @return {Uint8Array} `value` if correct data and `null` otherwise
 		 */
 		'verify_value' : (key, data) ->
-			if are_arrays_equal(blake2b_256(data), key)
+			if are_arrays_equal(blake2b_256(data), key) && data.length <= MAX_VALUE_LENGTH
 				return data
 			payload = @_verify_mutable_value(key, data)
-			if payload
+			if payload && payload[1].length <= MAX_VALUE_LENGTH
 				payload[1]
 			else
 				null
@@ -577,8 +582,9 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 	Object.defineProperty(DHT::, 'constructor', {value: DHT})
 
 	{
-		'ready'	: detox-crypto['ready']
-		'DHT'	: DHT
+		'ready'				: detox-crypto['ready']
+		'DHT'				: DHT
+		'MAX_VALUE_LENGTH'	: MAX_VALUE_LENGTH
 	}
 
 if typeof define == 'function' && define['amd']
