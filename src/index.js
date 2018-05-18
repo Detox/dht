@@ -73,7 +73,7 @@
   }
   /**
    * @param {number}		version
-   * @param {!Uint8Array}	data
+   * @param {!Uint8Array}	value
    *
    * @return {!Uint8Array}
    */
@@ -195,7 +195,7 @@
     Values_cache.prototype = {
       /**
        * @param {!Uint8Array}	key
-       * @param {!Map}		value
+       * @param {!Uint8Array}	value
        */
       add: function(key, value){
         if (this._map.has(key)) {
@@ -209,7 +209,7 @@
       /**
        * @param {!Uint8Array}	key
        *
-       * @return {!Map}
+       * @return {!Uint8Array}
        */,
       get: function(key){
         var value;
@@ -227,7 +227,7 @@
     /**
      * @constructor
      *
-     * @param {!Uint8Array}				dht_public_key						Own ID (Ed25519 public key)
+     * @param {!Uint8Array}				dht_public_key						Ed25519 that corresponds to temporary user identity in DHT network
      * @param {number}					bucket_size							Size of a bucket from Kademlia design
      * @param {number}					state_history_size					How many versions of local history will be kept
      * @param {number}					values_cache_size					How many values will be kept in cache
@@ -291,7 +291,7 @@
           if (!data.length) {
             data = null;
           }
-          state = this['get_state'](data);
+          state = this._get_state(data);
           if (state) {
             this._make_response(peer_id, transaction_id, state);
           }
@@ -394,14 +394,14 @@
         });
       }
       /**
-       * @parm {!Uint8Array} peer_id
+       * @param {!Uint8Array} peer_id
        */,
       _peer_error: function(peer_id){
         this['fire']('peer_error', peer_id);
         this['del_peer'](peer_id);
       }
       /**
-       * @parm {!Uint8Array} peer_id
+       * @param {!Uint8Array} peer_id
        */,
       _peer_warning: function(peer_id){
         this['fire']('peer_warning', peer_id);
@@ -416,11 +416,17 @@
         return this['fire']('connect_to', peer_peer_id, peer_id);
       }
       /**
+       * @return {!Uint8Array}
+       */,
+      'get_state': function(){
+        return this._get_state();
+      }
+      /**
        * @param {Uint8Array=} state_version	Specific state version or latest if `null`
        *
        * @return {!Uint8Array}
        */,
-      'get_state': function(state_version){
+      _get_state: function(state_version){
         var ref$, proof, peers;
         state_version == null && (state_version = null);
         if (this._destroyed) {
@@ -442,8 +448,8 @@
        * @param {!Uint8Array}	peer_id	Id of a peer
        * @param {!Uint8Array}	state	Peer's state generated with `get_state()` method
        *
-       * @return {boolean} `false` if proof is not valid, returning `true` only means there was not errors, but peer was not necessarily added to k-bucket
-       *                   (use `has_peer()` method if confirmation of addition to k-bucket is needed)
+       * @return {boolean} `false` if state proof is not valid, returning `true` only means there was not errors, but peer was not necessarily added to
+       *                   k-bucket (use `has_peer()` method if confirmation of addition to k-bucket is needed)
        */,
       'set_peer': function(peer_id, state){
         var ref$, peer_state_version, proof, peer_peers, result;
@@ -460,7 +466,7 @@
       /**
        * @param {!Uint8Array} node_id
        *
-       * @return {boolean} `true` if node is our peer (stored in k-bucket)
+       * @return {boolean} `true` if `node_id` is our peer (stored in k-bucket)
        */,
       'has_peer': function(node_id){
         if (this._destroyed) {
@@ -573,7 +579,7 @@
       /**
        * @param {!Uint8Array} value
        *
-       * @return {Array<!Uint8Array>} `[key, data]`, can be published to DHT with `put_value()` method or `null` if value is too big to be stored in DHT
+       * @return {Array<!Uint8Array>} `[key, data]`, can be placed into DHT with `put_value()` method or `null` if value is too big to be stored in DHT
        */,
       'make_immutable_value': function(value){
         var key;
@@ -589,7 +595,7 @@
        * @param {number}		version		Up to 32-bit number
        * @param {!Uint8Array}	value
        *
-       * @return {Array<!Uint8Array>} `[key, data]`, can be published to DHT with `put_value()` method or `null` if value is too big to be stored in DHT
+       * @return {Array<!Uint8Array>} `[key, data]`, can be placed into DHT with `put_value()` method or `null` if value is too big to be stored in DHT
        */,
       'make_mutable_value': function(public_key, private_key, version, value){
         var payload, signature, data;
@@ -708,9 +714,9 @@
         return transaction_id;
       }
       /**
-       * @param {!Uint8Array} peer_id
-       * @param {!Uint8Array} command
-       * @param {!Uint8Array} payload
+       * @param {!Uint8Array}	peer_id
+       * @param {number}		command
+       * @param {!Uint8Array}	payload
        */,
       _send: function(peer_id, command, payload){
         this['fire']('send', peer_id, command, payload);

@@ -63,7 +63,7 @@ function parse_payload (payload)
 	[transaction_id, data]
 /**
  * @param {number}		version
- * @param {!Uint8Array}	data
+ * @param {!Uint8Array}	value
  *
  * @return {!Uint8Array}
  */
@@ -165,7 +165,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 	Values_cache:: =
 		/**
 		 * @param {!Uint8Array}	key
-		 * @param {!Map}		value
+		 * @param {!Uint8Array}	value
 		 */
 		add : (key, value) !->
 			if @_map.has(key)
@@ -177,7 +177,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		/**
 		 * @param {!Uint8Array}	key
 		 *
-		 * @return {!Map}
+		 * @return {!Uint8Array}
 		 */
 		get : (key) ->
 			value	= @_map.get(key)
@@ -189,7 +189,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 	/**
 	 * @constructor
 	 *
-	 * @param {!Uint8Array}				dht_public_key						Own ID (Ed25519 public key)
+	 * @param {!Uint8Array}				dht_public_key						Ed25519 that corresponds to temporary user identity in DHT network
 	 * @param {number}					bucket_size							Size of a bucket from Kademlia design
 	 * @param {number}					state_history_size					How many versions of local history will be kept
 	 * @param {number}					values_cache_size					How many values will be kept in cache
@@ -241,7 +241,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					# Support for getting latest state version with empty state version request
 					if !data.length
 						data	= null
-					state	= @'get_state'(data)
+					state	= @_get_state(data)
 					if state
 						@_make_response(peer_id, transaction_id, state)
 				case COMMAND_GET_PROOF
@@ -321,14 +321,14 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 							@_peer_warning(parent_node_id)
 							done()
 		/**
-		 * @parm {!Uint8Array} peer_id
+		 * @param {!Uint8Array} peer_id
 		 */
 		_peer_error : (peer_id) !->
 			# Notify higher level about peer error, error is a strong indication of malicious node, stop communicating immediately
 			@'fire'('peer_error', peer_id)
 			@'del_peer'(peer_id)
 		/**
-		 * @parm {!Uint8Array} peer_id
+		 * @param {!Uint8Array} peer_id
 		 */
 		_peer_warning : (peer_id) !->
 			# Notify higher level about peer warning, warning is a potential indication of malicious node, but threshold must be implemented on higher level
@@ -342,11 +342,16 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		_connect_to : (peer_peer_id, peer_id) ->
 			@'fire'('connect_to', peer_peer_id, peer_id)
 		/**
+		 * @return {!Uint8Array}
+		 */
+		'get_state' : ->
+			@_get_state()
+		/**
 		 * @param {Uint8Array=} state_version	Specific state version or latest if `null`
 		 *
 		 * @return {!Uint8Array}
 		 */
-		'get_state' : (state_version = null) ->
+		_get_state : (state_version = null) ->
 			if @_destroyed
 				return null_array
 			[state_version, proof, peers]	= @_dht['get_state'](state_version)
@@ -362,8 +367,8 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 * @param {!Uint8Array}	peer_id	Id of a peer
 		 * @param {!Uint8Array}	state	Peer's state generated with `get_state()` method
 		 *
-		 * @return {boolean} `false` if proof is not valid, returning `true` only means there was not errors, but peer was not necessarily added to k-bucket
-		 *                   (use `has_peer()` method if confirmation of addition to k-bucket is needed)
+		 * @return {boolean} `false` if state proof is not valid, returning `true` only means there was not errors, but peer was not necessarily added to
+		 *                   k-bucket (use `has_peer()` method if confirmation of addition to k-bucket is needed)
 		 */
 		'set_peer' : (peer_id, state) ->
 			if @_destroyed
@@ -376,7 +381,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		/**
 		 * @param {!Uint8Array} node_id
 		 *
-		 * @return {boolean} `true` if node is our peer (stored in k-bucket)
+		 * @return {boolean} `true` if `node_id` is our peer (stored in k-bucket)
 		 */
 		'has_peer' : (node_id) ->
 			if @_destroyed
@@ -466,7 +471,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		/**
 		 * @param {!Uint8Array} value
 		 *
-		 * @return {Array<!Uint8Array>} `[key, data]`, can be published to DHT with `put_value()` method or `null` if value is too big to be stored in DHT
+		 * @return {Array<!Uint8Array>} `[key, data]`, can be placed into DHT with `put_value()` method or `null` if value is too big to be stored in DHT
 		 */
 		'make_immutable_value' : (value) ->
 			if value.length > MAX_VALUE_LENGTH
@@ -479,7 +484,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 * @param {number}		version		Up to 32-bit number
 		 * @param {!Uint8Array}	value
 		 *
-		 * @return {Array<!Uint8Array>} `[key, data]`, can be published to DHT with `put_value()` method or `null` if value is too big to be stored in DHT
+		 * @return {Array<!Uint8Array>} `[key, data]`, can be placed into DHT with `put_value()` method or `null` if value is too big to be stored in DHT
 		 */
 		'make_mutable_value' : (public_key, private_key, version, value) ->
 			if value.length > MAX_VALUE_LENGTH
@@ -571,9 +576,9 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 				@_transactions_counter = 0
 			transaction_id
 		/**
-		 * @param {!Uint8Array} peer_id
-		 * @param {!Uint8Array} command
-		 * @param {!Uint8Array} payload
+		 * @param {!Uint8Array}	peer_id
+		 * @param {number}		command
+		 * @param {!Uint8Array}	payload
 		 */
 		_send : (peer_id, command, payload) !->
 			@'fire'('send', peer_id, command, payload)
