@@ -55,19 +55,10 @@ Method needs to be called when DHT `command` is received from `peer_id` with `pa
 ### detox_dht.DHT.lookup(node_id : Uint8Array) : Promise
 Promise resolves with `Uint8Array[]`, array will contain either `node_id` or IDs of nodes that are closest to it.
 
-### detox_dht.DHT.get_state() : Uint8Array
-Used during on connection to new peer, will return latest state that can be consumed by `set_peer()` method.
+### detox_dht.DHT.add_peer(peer_id : Uint8Array)
+Add new peer on connection.
 
-### detox_dht.DHT.get_peers() : Uint8Array[]
-Returns IDs of all peers.
-
-### detox_dht.DHT.set_peer(peer_id : Uint8Array, state : Uint8Array) : boolean
-Add or update peer, usually only used explicitly on connection to new peer.
-
-Returns `false` if state proof is not valid, returning `true` only means there was not errors, but peer was not necessarily added to k-bucket (use `has_peer()` method if confirmation of addition to k-bucket is needed).
-
-### detox_dht.DHT.has_peer(node_id : Uint8Array) : boolean
-Returns `true` if `node_id` is our peer (stored in k-bucket).
+Peer would not necessarily be added to k-bucket though, depending on internal state.
 
 ### detox_dht.DHT.del_peer(peer_id : Uint8Array)
 Delete peer `peer_id`, for instance, when peer is disconnected.

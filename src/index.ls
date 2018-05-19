@@ -212,14 +212,8 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		@_values					= Values_cache(values_cache_size)
 		@_state_update_interval		= intervalSet(@_timeouts['STATE_UPDATE_INTERVAL'], !~>
 			# Periodically fetch latest state from all peers
-			for let peer_id in @'get_peers'()
-				@_make_request(peer_id, COMMAND_GET_STATE, null_array, @_timeouts['GET_STATE_REQUEST_TIMEOUT'])
-					.then (state) !~>
-						if !@'set_peer'(peer_id, state)
-							@_peer_error(peer_id)
-					.catch (error) !->
-						error_handler(error)
-						@_peer_warning(peer_id)
+			for peer_id in @_dht['get_state']()[2]
+				@_update_peer_state(peer_id)
 		)
 
 	DHT:: =
@@ -344,11 +338,6 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		_connect_to : (peer_peer_id, peer_id) ->
 			@'fire'('connect_to', peer_peer_id, peer_id)
 		/**
-		 * @return {!Uint8Array}
-		 */
-		'get_state' : ->
-			@_get_state()
-		/**
 		 * @param {Uint8Array=} state_version	Specific state version or latest if `null`
 		 *
 		 * @return {!Uint8Array}
@@ -367,28 +356,13 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 			@_dht['get_state']()[2]
 		/**
 		 * @param {!Uint8Array}	peer_id	Id of a peer
-		 * @param {!Uint8Array}	state	Peer's state generated with `get_state()` method
-		 *
-		 * @return {boolean} `false` if state proof is not valid, returning `true` only means there was not errors, but peer was not necessarily added to
-		 *                   k-bucket (use `has_peer()` method if confirmation of addition to k-bucket is needed)
 		 */
-		'set_peer' : (peer_id, state) ->
+		'add_peer' : (peer_id) ->
 			if @_destroyed
-				return false
-			[peer_state_version, proof, peer_peers]	= parse_state(state)
-			result	= @_dht['set_peer'](peer_id, peer_state_version, proof, peer_peers)
-			if !result
-				@_peer_error(peer_id)
-			result
-		/**
-		 * @param {!Uint8Array} node_id
-		 *
-		 * @return {boolean} `true` if `node_id` is our peer (stored in k-bucket)
-		 */
-		'has_peer' : (node_id) ->
-			if @_destroyed
-				return false
-			@_dht['has_peer'](node_id)
+				return
+			if !@_dht['has_peer'](peer_id)
+				# Fetch latest state from potential new peers whose state we don't have yet
+				@_update_peer_state(peer_id)
 		/**
 		 * @param {!Uint8Array} peer_id Id of a peer
 		 */
@@ -584,6 +558,19 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 */
 		_send : (peer_id, command, payload) !->
 			@'fire'('send', peer_id, command, payload)
+		/**
+		 * @param {!Uint8Array}	peer_id
+		 */
+		_update_peer_state : (peer_id) !->
+			@_make_request(peer_id, COMMAND_GET_STATE, null_array, @_timeouts['GET_STATE_REQUEST_TIMEOUT'])
+				.then (state) !~>
+					[peer_state_version, proof, peer_peers]	= parse_state(state)
+					result									= @_dht['set_peer'](peer_id, peer_state_version, proof, peer_peers)
+					if !result
+						@_peer_error(peer_id)
+				.catch (error) !->
+					error_handler(error)
+					@_peer_warning(peer_id)
 
 	DHT:: = Object.assign(Object.create(async-eventer::), DHT::)
 	Object.defineProperty(DHT::, 'constructor', {value: DHT})

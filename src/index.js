@@ -251,20 +251,10 @@
       this._timeouts_in_progress = new Set;
       this._values = Values_cache(values_cache_size);
       this._state_update_interval = intervalSet(this._timeouts['STATE_UPDATE_INTERVAL'], function(){
-        var i$, ref$, len$;
-        for (i$ = 0, len$ = (ref$ = this$['get_peers']()).length; i$ < len$; ++i$) {
-          (fn$.call(this$, ref$[i$]));
-        }
-        function fn$(peer_id){
-          var this$ = this;
-          this._make_request(peer_id, COMMAND_GET_STATE, null_array, this._timeouts['GET_STATE_REQUEST_TIMEOUT']).then(function(state){
-            if (!this$['set_peer'](peer_id, state)) {
-              this$._peer_error(peer_id);
-            }
-          })['catch'](function(error){
-            error_handler(error);
-            this._peer_warning(peer_id);
-          });
+        var i$, ref$, len$, peer_id;
+        for (i$ = 0, len$ = (ref$ = this$._dht['get_state']()[2]).length; i$ < len$; ++i$) {
+          peer_id = ref$[i$];
+          this$._update_peer_state(peer_id);
         }
       });
     }
@@ -417,12 +407,6 @@
         return this['fire']('connect_to', peer_peer_id, peer_id);
       }
       /**
-       * @return {!Uint8Array}
-       */,
-      'get_state': function(){
-        return this._get_state();
-      }
-      /**
        * @param {Uint8Array=} state_version	Specific state version or latest if `null`
        *
        * @return {!Uint8Array}
@@ -447,33 +431,14 @@
       }
       /**
        * @param {!Uint8Array}	peer_id	Id of a peer
-       * @param {!Uint8Array}	state	Peer's state generated with `get_state()` method
-       *
-       * @return {boolean} `false` if state proof is not valid, returning `true` only means there was not errors, but peer was not necessarily added to
-       *                   k-bucket (use `has_peer()` method if confirmation of addition to k-bucket is needed)
        */,
-      'set_peer': function(peer_id, state){
-        var ref$, peer_state_version, proof, peer_peers, result;
+      'add_peer': function(peer_id){
         if (this._destroyed) {
-          return false;
+          return;
         }
-        ref$ = parse_state(state), peer_state_version = ref$[0], proof = ref$[1], peer_peers = ref$[2];
-        result = this._dht['set_peer'](peer_id, peer_state_version, proof, peer_peers);
-        if (!result) {
-          this._peer_error(peer_id);
+        if (!this._dht['has_peer'](peer_id)) {
+          return this._update_peer_state(peer_id);
         }
-        return result;
-      }
-      /**
-       * @param {!Uint8Array} node_id
-       *
-       * @return {boolean} `true` if `node_id` is our peer (stored in k-bucket)
-       */,
-      'has_peer': function(node_id){
-        if (this._destroyed) {
-          return false;
-        }
-        return this._dht['has_peer'](node_id);
       }
       /**
        * @param {!Uint8Array} peer_id Id of a peer
@@ -721,6 +686,23 @@
        */,
       _send: function(peer_id, command, payload){
         this['fire']('send', peer_id, command, payload);
+      }
+      /**
+       * @param {!Uint8Array}	peer_id
+       */,
+      _update_peer_state: function(peer_id){
+        var this$ = this;
+        this._make_request(peer_id, COMMAND_GET_STATE, null_array, this._timeouts['GET_STATE_REQUEST_TIMEOUT']).then(function(state){
+          var ref$, peer_state_version, proof, peer_peers, result;
+          ref$ = parse_state(state), peer_state_version = ref$[0], proof = ref$[1], peer_peers = ref$[2];
+          result = this$._dht['set_peer'](peer_id, peer_state_version, proof, peer_peers);
+          if (!result) {
+            this$._peer_error(peer_id);
+          }
+        })['catch'](function(error){
+          error_handler(error);
+          this._peer_warning(peer_id);
+        });
       }
     };
     DHT.prototype = Object.assign(Object.create(asyncEventer.prototype), DHT.prototype);

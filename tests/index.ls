@@ -20,7 +20,7 @@ test('Detox DHT', (t) !->
 	function DHT (id)
 		instance	= lib.DHT(id, 20, 1000, 1000, 0.2, {STATE_UPDATE_INTERVAL: 0.1})
 			.on('connect_to', (peer_peer_id) !->
-				instance.set_peer(peer_peer_id, instances.get(peer_peer_id).get_state())
+				instance.add_peer(peer_peer_id)
 			)
 			.on('send', (target_id, command, payload) !->
 				instances.get(target_id).receive(id, command, payload)
@@ -42,8 +42,8 @@ test('Detox DHT', (t) !->
 		instance	= DHT(id)
 		nodes.push(id)
 		instances.set(id, instance)
-		bootstrap_node_instance.set_peer(id, instance.get_state())
-		instance.set_peer(bootstrap_node_id, bootstrap_node_instance.get_state())
+		bootstrap_node_instance.add_peer(id)
+		instance.add_peer(bootstrap_node_id)
 
 	console.log 'Warm-up...'
 
