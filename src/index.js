@@ -290,6 +290,7 @@
         case COMMAND_GET_STATE:
           if (!data.length) {
             data = null;
+            this._dht['commit_state']();
           }
           state = this._get_state(data);
           if (state) {

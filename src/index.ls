@@ -241,6 +241,8 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					# Support for getting latest state version with empty state version request
 					if !data.length
 						data	= null
+						# Commit latest state, since it will be known to other peers
+						@_dht['commit_state']()
 					state	= @_get_state(data)
 					if state
 						@_make_response(peer_id, transaction_id, state)
