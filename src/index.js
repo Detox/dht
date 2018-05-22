@@ -122,7 +122,7 @@
     return [key, payload];
   }
   function Wrapper(detoxCrypto, detoxUtils, asyncEventer, esDht){
-    var blake2b_256, create_signature, verify_signature, are_arrays_equal, concat_arrays, timeoutSet, intervalSet, ArrayMap, error_handler, null_array;
+    var blake2b_256, create_signature, verify_signature, are_arrays_equal, concat_arrays, timeoutSet, intervalSet, ArrayMap, error_handler, empty_array;
     blake2b_256 = detoxCrypto['blake2b_256'];
     create_signature = detoxCrypto['sign'];
     verify_signature = detoxCrypto['verify'];
@@ -132,7 +132,7 @@
     intervalSet = detoxUtils['intervalSet'];
     ArrayMap = detoxUtils['ArrayMap'];
     error_handler = detoxUtils['error_handler'];
-    null_array = new Uint8Array(0);
+    empty_array = new Uint8Array(0);
     /**
      * @param {!Uint8Array}			state_version
      * @param {!Uint8Array}			proof
@@ -163,7 +163,7 @@
       proof_length = proof_height * (ID_LENGTH + 1);
       proof = data.subarray(ID_LENGTH + 1, ID_LENGTH + 1 + proof_length);
       if (proof.length !== proof.length) {
-        proof = null_array;
+        proof = empty_array;
       }
       peers = data.subarray(ID_LENGTH + 1 + proof_length);
       if (peers.length % ID_LENGTH) {
@@ -293,7 +293,7 @@
           break;
         case COMMAND_GET_VALUE:
           value = this._values.get(data);
-          this._make_response(peer_id, transaction_id, value || null_array);
+          this._make_response(peer_id, transaction_id, value || empty_array);
           break;
         case COMMAND_PUT_VALUE:
           ref$ = parse_put_value_request(data), key = ref$[0], payload = ref$[1];
@@ -415,7 +415,7 @@
         var ref$, proof, peers;
         state_version == null && (state_version = null);
         if (this._destroyed) {
-          return null_array;
+          return empty_array;
         }
         ref$ = this._dht['get_state'](state_version), state_version = ref$[0], proof = ref$[1], peers = ref$[2];
         return compose_state(state_version, proof, peers);
@@ -692,7 +692,7 @@
        */,
       _update_peer_state: function(peer_id){
         var this$ = this;
-        this._make_request(peer_id, COMMAND_GET_STATE, null_array, this._timeouts['GET_STATE_REQUEST_TIMEOUT']).then(function(state){
+        this._make_request(peer_id, COMMAND_GET_STATE, empty_array, this._timeouts['GET_STATE_REQUEST_TIMEOUT']).then(function(state){
           var ref$, peer_state_version, proof, peer_peers, result;
           ref$ = parse_state(state), peer_state_version = ref$[0], proof = ref$[1], peer_peers = ref$[2];
           result = this$._dht['set_peer'](peer_id, peer_state_version, proof, peer_peers);

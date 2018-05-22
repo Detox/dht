@@ -113,7 +113,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 	intervalSet			= detox-utils['intervalSet']
 	ArrayMap			= detox-utils['ArrayMap']
 	error_handler		= detox-utils['error_handler']
-	null_array			= new Uint8Array(0)
+	empty_array			= new Uint8Array(0)
 
 	/**
 	 * @param {!Uint8Array}			state_version
@@ -141,7 +141,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		proof_length	= proof_height * (ID_LENGTH + 1)
 		proof			= data.subarray(ID_LENGTH + 1, ID_LENGTH + 1 + proof_length)
 		if proof.length != proof.length
-			proof = null_array
+			proof = empty_array
 		peers			= data.subarray(ID_LENGTH + 1 + proof_length)
 		if peers.length % ID_LENGTH
 			peers	= []
@@ -245,7 +245,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					@_make_response(peer_id, transaction_id, @_dht['get_state_proof'](state_version, node_id))
 				case COMMAND_GET_VALUE
 					value	= @_values.get(data)
-					@_make_response(peer_id, transaction_id, value || null_array)
+					@_make_response(peer_id, transaction_id, value || empty_array)
 				case COMMAND_PUT_VALUE
 					[key, payload]	= parse_put_value_request(data)
 					if @'verify_value'(key, payload)
@@ -344,7 +344,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 */
 		_get_state : (state_version = null) ->
 			if @_destroyed
-				return null_array
+				return empty_array
 			[state_version, proof, peers]	= @_dht['get_state'](state_version)
 			compose_state(state_version, proof, peers)
 		/**
@@ -562,7 +562,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		 * @param {!Uint8Array}	peer_id
 		 */
 		_update_peer_state : (peer_id) !->
-			@_make_request(peer_id, COMMAND_GET_STATE, null_array, @_timeouts['GET_STATE_REQUEST_TIMEOUT'])
+			@_make_request(peer_id, COMMAND_GET_STATE, empty_array, @_timeouts['GET_STATE_REQUEST_TIMEOUT'])
 				.then (state) !~>
 					[peer_state_version, proof, peer_peers]	= parse_state(state)
 					result									= @_dht['set_peer'](peer_id, peer_state_version, proof, peer_peers)
