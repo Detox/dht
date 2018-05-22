@@ -357,7 +357,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		/**
 		 * @param {!Uint8Array}	peer_id	Id of a peer
 		 */
-		'add_peer' : (peer_id) ->
+		'add_peer' : (peer_id) !->
 			if @_destroyed
 				return
 			if !@_dht['has_peer'](peer_id)

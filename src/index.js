@@ -437,7 +437,7 @@
           return;
         }
         if (!this._dht['has_peer'](peer_id)) {
-          return this._update_peer_state(peer_id);
+          this._update_peer_state(peer_id);
         }
       }
       /**
