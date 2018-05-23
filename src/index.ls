@@ -205,6 +205,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 
 		@_timeouts					= Object.assign({}, DEFAULT_TIMEOUTS, timeouts)
 		@_dht						= es-dht(dht_public_key, blake2b_256, bucket_size, state_history_size, fraction_of_nodes_from_same_peer)
+		@_bucket_size				= bucket_size
 		# Start from random transaction number
 		@_transactions_counter		= detox-utils['random_int'](0, 2 ** 16 - 1)
 		@_transactions_in_progress	= new Map
@@ -253,14 +254,15 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 					else
 						@_peer_error(peer_id)
 		/**
-		 * @param {!Uint8Array} node_id
+		 * @param {!Uint8Array}	node_id
+		 * @param {number=}		number	Number of nodes to be returned if exact match was not found, defaults to bucket size
 		 *
 		 * @return {!Promise} Resolves with `!Array<!Uint8Array>`
 		 */
-		'lookup' : (node_id) ->
+		'lookup' : (node_id, number = @_bucket_size) ->
 			if @_destroyed
 				return Promise.reject()
-			@_handle_lookup(node_id, @_dht['start_lookup'](node_id))
+			@_handle_lookup(node_id, @_dht['start_lookup'](node_id, number))
 		/**
 		 * @param {!Uint8Array}					node_id
 		 * @param {!Array<!Array<!Uint8Array>>}	nodes_to_connect_to

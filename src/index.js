@@ -246,6 +246,7 @@
       asyncEventer.call(this);
       this._timeouts = Object.assign({}, DEFAULT_TIMEOUTS, timeouts);
       this._dht = esDht(dht_public_key, blake2b_256, bucket_size, state_history_size, fraction_of_nodes_from_same_peer);
+      this._bucket_size = bucket_size;
       this._transactions_counter = detoxUtils['random_int'](0, Math.pow(2, 16) - 1);
       this._transactions_in_progress = new Map;
       this._timeouts_in_progress = new Set;
@@ -305,15 +306,17 @@
         }
       }
       /**
-       * @param {!Uint8Array} node_id
+       * @param {!Uint8Array}	node_id
+       * @param {number=}		number	Number of nodes to be returned if exact match was not found, defaults to bucket size
        *
        * @return {!Promise} Resolves with `!Array<!Uint8Array>`
        */,
-      'lookup': function(node_id){
+      'lookup': function(node_id, number){
+        number == null && (number = this._bucket_size);
         if (this._destroyed) {
           return Promise.reject();
         }
-        return this._handle_lookup(node_id, this._dht['start_lookup'](node_id));
+        return this._handle_lookup(node_id, this._dht['start_lookup'](node_id, number));
       }
       /**
        * @param {!Uint8Array}					node_id

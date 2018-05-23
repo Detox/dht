@@ -52,8 +52,13 @@ Following timeouts keys are supported, refer to source code for default values:
 ### detox_dht.DHT.receive(peer_id : Uint8Array, command : number, payload : Uint8Array)
 Method needs to be called when DHT `command` is received from `peer_id` with `payload`.
 
-### detox_dht.DHT.lookup(node_id : Uint8Array) : Promise
-Promise resolves with `Uint8Array[]`, array will contain either `node_id` or IDs of nodes that are closest to it.
+### detox_dht.DHT.lookup(node_id : Uint8Array, number = bucket_size : number) : Promise
+Starts lookup for specified ID.
+
+* `node_id` - target ID
+* `number` - how many nodes to return in case lookup doesn't reach target ID (also impacts lookup performance in each round, defaults to bucket size)
+
+Promise resolves with `Uint8Array[]`, array will contain either `node_id` or up to `number` of IDs of nodes that are closest to it.
 
 ### detox_dht.DHT.add_peer(peer_id : Uint8Array)
 Add new peer on connection.
