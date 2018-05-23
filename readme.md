@@ -122,6 +122,11 @@ Payload consists of three arguments: `peer_id` (`Uint8Array`), `command` (`numbe
 
 Event is fired when DHT `command` needs to be sent to `peer_id` with `payload`.
 
+### Event: peer_updated
+Payload consists of two arguments: `peer_id` (`Uint8Array`) and `peer_peers` (`Uint8Array[]`).
+
+Event is fired when new state version was received from `peer_id` and `peer_peers` are their current peers.
+
 ### detox_dht.MAX_VALUE_LENGTH : number
 Constant that defines max size of a value that can be stored in DHT.
 

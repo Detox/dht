@@ -699,7 +699,9 @@
           var ref$, peer_state_version, proof, peer_peers, result;
           ref$ = parse_state(state), peer_state_version = ref$[0], proof = ref$[1], peer_peers = ref$[2];
           result = this$._dht['set_peer'](peer_id, peer_state_version, proof, peer_peers);
-          if (!result) {
+          if (result) {
+            this$['fire']('peer_updated', peer_id, peer_peers);
+          } else {
             this$._peer_error(peer_id);
           }
         })['catch'](function(error){

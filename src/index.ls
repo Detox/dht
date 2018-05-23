@@ -568,7 +568,9 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 				.then (state) !~>
 					[peer_state_version, proof, peer_peers]	= parse_state(state)
 					result									= @_dht['set_peer'](peer_id, peer_state_version, proof, peer_peers)
-					if !result
+					if result
+						@'fire'('peer_updated', peer_id, peer_peers)
+					else
 						@_peer_error(peer_id)
 				.catch (error) !->
 					error_handler(error)
