@@ -381,7 +381,7 @@
               }
             })['catch'](function(error){
               error_handler(error);
-              this._peer_warning(parent_node_id);
+              this$._peer_warning(parent_node_id);
               done();
             });
           }

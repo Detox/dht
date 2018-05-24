@@ -314,7 +314,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 							else
 								@_peer_error(parent_node_id)
 								done()
-						.catch (error) !->
+						.catch (error) !~>
 							error_handler(error)
 							@_peer_warning(parent_node_id)
 							done()
