@@ -521,7 +521,7 @@
             }
             function fn1$(error){
               error_handler(error);
-              this._peer_warning(peer_id);
+              this$._peer_warning(peer_id);
               done();
             }
           });
@@ -706,7 +706,7 @@
           }
         })['catch'](function(error){
           error_handler(error);
-          this._peer_warning(peer_id);
+          this$._peer_warning(peer_id);
         });
       }
     };

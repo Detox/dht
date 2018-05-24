@@ -6,7 +6,7 @@
 		"dht",
 		"es-dht"
 	],
-	"version"         : "0.16.4",
+	"version"         : "0.16.5",
 	"homepage"        : "https://github.com/Detox/dht",
 	"author"          : "Nazar Mokrynskyi <nazar@mokrynskyi.com>",
 	"repository"      : {

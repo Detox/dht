@@ -427,7 +427,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 								else
 									@_peer_error(peer_id)
 								done()
-							.catch (error) !->
+							.catch (error) !~>
 								error_handler(error)
 								@_peer_warning(peer_id)
 								done()
@@ -572,7 +572,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 						@'fire'('peer_updated', peer_id, peer_peers)
 					else
 						@_peer_error(peer_id)
-				.catch (error) !->
+				.catch (error) !~>
 					error_handler(error)
 					@_peer_warning(peer_id)
 
