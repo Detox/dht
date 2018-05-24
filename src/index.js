@@ -358,7 +358,7 @@
               var target_node_state_version;
               target_node_state_version = this$._dht['check_state_proof'](parent_state_version, proof, target_node_id);
               if (target_node_state_version) {
-                this$._connect_to(target_node_id, parent_node_id).then(function(){
+                return this$._connect_to(target_node_id, parent_node_id).then(function(){
                   return this$._make_request(target_node_id, COMMAND_GET_STATE, target_node_state_version, this$._timeouts['GET_STATE_REQUEST_TIMEOUT']).then(parse_state).then(function(arg$){
                     var state_version, proof, peers, proof_check_result;
                     state_version = arg$[0], proof = arg$[1], peers = arg$[2];
@@ -371,7 +371,7 @@
                     done();
                   })['catch'](function(error){
                     error_handler(error);
-                    this._peer_warning(target_node_id);
+                    this$._peer_warning(target_node_id);
                     done();
                   });
                 });

@@ -146,7 +146,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		if peers.length % ID_LENGTH
 			peers	= []
 		else
-			peers			=
+			peers	=
 				for i from 0 til peers.length / ID_LENGTH
 					peers.subarray(ID_LENGTH * i, ID_LENGTH * (i + 1))
 		[state_version, proof, peers]
@@ -291,7 +291,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 						.then (proof) !~>
 							target_node_state_version	= @_dht['check_state_proof'](parent_state_version, proof, target_node_id)
 							if target_node_state_version
-								@_connect_to(target_node_id, parent_node_id).then ~>
+								return @_connect_to(target_node_id, parent_node_id).then ~>
 									@_make_request(target_node_id, COMMAND_GET_STATE, target_node_state_version, @_timeouts['GET_STATE_REQUEST_TIMEOUT'])
 										.then(parse_state)
 										.then ([state_version, proof, peers]) !~>
@@ -307,7 +307,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 											else
 												@_peer_error(target_node_id)
 											done()
-										.catch (error) !->
+										.catch (error) !~>
 											error_handler(error)
 											@_peer_warning(target_node_id)
 											done()
