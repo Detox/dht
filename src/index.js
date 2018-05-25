@@ -348,7 +348,7 @@
           function done(){
             pending--;
             if (!pending) {
-              this$._handle_lookup(node_id, nodes_for_next_round).then(resolve);
+              this$._handle_lookup(node_id, nodes_for_next_round).then(resolve)['catch'](reject);
             }
           }
           for (i$ = 0, len$ = (ref$ = nodes_to_connect_to).length; i$ < len$; ++i$) {

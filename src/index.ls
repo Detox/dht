@@ -287,7 +287,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 				!~function done
 					pending--
 					if !pending
-						@_handle_lookup(node_id, nodes_for_next_round).then(resolve)
+						@_handle_lookup(node_id, nodes_for_next_round).then(resolve).catch(reject)
 				for let [target_node_id, parent_node_id, parent_state_version] in nodes_to_connect_to
 					@_make_request(parent_node_id, COMMAND_GET_PROOF, compose_get_proof_request(parent_state_version, target_node_id), @_timeouts['GET_PROOF_REQUEST_TIMEOUT'])
 						.then (proof) !~>
