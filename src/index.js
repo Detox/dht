@@ -312,11 +312,14 @@
        * @return {!Promise} Resolves with `!Array<!Uint8Array>`
        */,
       'lookup': function(node_id, number){
+        var promise;
         number == null && (number = this._bucket_size);
         if (this._destroyed) {
           return Promise.reject();
         }
-        return this._handle_lookup(node_id, this._dht['start_lookup'](node_id, number));
+        promise = this._handle_lookup(node_id, this._dht['start_lookup'](node_id, number));
+        promise['catch'](error_handler);
+        return promise;
       }
       /**
        * @param {!Uint8Array}					node_id
@@ -458,7 +461,7 @@
        * @return {!Promise} Resolves with value on success
        */,
       'get_value': function(key){
-        var value, this$ = this;
+        var value, promise, this$ = this;
         if (this._destroyed) {
           return Promise.reject();
         }
@@ -466,7 +469,7 @@
         if (value && are_arrays_equal(blake2b_256(value), key)) {
           return Promise.resolve(value);
         }
-        return this['lookup'](key).then(function(peers){
+        promise = this['lookup'](key).then(function(peers){
           return new Promise(function(resolve, reject){
             var pending, stop, found, i$, ref$, len$, peer_id;
             pending = peers.length;
@@ -526,6 +529,8 @@
             }
           });
         });
+        promise['catch'](error_handler);
+        return promise;
       }
       /**
        * @param {!Uint8Array} key

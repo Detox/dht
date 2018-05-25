@@ -262,7 +262,9 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		'lookup' : (node_id, number = @_bucket_size) ->
 			if @_destroyed
 				return Promise.reject()
-			@_handle_lookup(node_id, @_dht['start_lookup'](node_id, number))
+			promise	= @_handle_lookup(node_id, @_dht['start_lookup'](node_id, number))
+			promise.catch(error_handler)
+			promise
 		/**
 		 * @param {!Uint8Array}					node_id
 		 * @param {!Array<!Array<!Uint8Array>>}	nodes_to_connect_to
@@ -384,7 +386,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 			# Return immutable value from cache immediately, but for mutable try to find never version first
 			if value && are_arrays_equal(blake2b_256(value), key)
 				return Promise.resolve(value)
-			@'lookup'(key).then (peers) ~>
+			promise	= @'lookup'(key).then (peers) ~>
 				new Promise (resolve, reject) !~>
 					pending	= peers.length
 					stop	= false
@@ -431,6 +433,8 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 								error_handler(error)
 								@_peer_warning(peer_id)
 								done()
+			promise.catch(error_handler)
+			promise
 		/**
 		 * @param {!Uint8Array} key
 		 * @param {!Uint8Array} data
