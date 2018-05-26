@@ -14,7 +14,7 @@ ArrayMap		= detox-utils.ArrayMap
 random_bytes	= detox-utils.random_bytes
 
 test('Detox DHT', (t) !->
-	t.plan(16)
+	t.plan(17)
 
 	console.log 'Creating instances...'
 	function DHT (id)
@@ -101,7 +101,10 @@ test('Detox DHT', (t) !->
 				node_c.get_value(key_mutable)
 			.then (value) ->
 				t.equal(value.join(','), mutable_value2.join(','), 'getting mutable value v1 on node c succeeded')
-				node_a.lookup(random_bytes(32))
+				random_id	= random_bytes(32)
+				promise		= node_a.lookup(random_id)
+				t.ok(promise == node_a.lookup(random_id), 'Subsequent lookups for the same ID return the same exact promise')
+				promise
 			.then (lookup_nodes) !->
 				t.ok(lookup_nodes.length >= 2 && lookup_nodes.length <= 20, 'Found at most 20 nodes on random lookup, but not less than 2')
 				t.ok(lookup_nodes[0] instanceof Uint8Array, 'Node has correct ID type')

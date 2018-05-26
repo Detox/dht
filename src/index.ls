@@ -211,6 +211,7 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		@_transactions_in_progress	= new Map
 		@_timeouts_in_progress		= new Set
 		@_values					= Values_cache(values_cache_size)
+		@_lookups_in_progress		= ArrayMap()
 		@_state_update_interval		= intervalSet(@_timeouts['STATE_UPDATE_INTERVAL'], !~>
 			# Periodically fetch latest state from all peers
 			for peer_id in @_dht['get_state']()[2]
@@ -262,8 +263,17 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		'lookup' : (node_id, number = @_bucket_size) ->
 			if @_destroyed
 				return Promise.reject()
+			promise	= @_lookups_in_progress.get(node_id)
+			if promise
+				return promise
 			promise	= @_handle_lookup(node_id, @_dht['start_lookup'](node_id, number))
 			promise.catch(error_handler)
+			@_lookups_in_progress.set(node_id, promise)
+			promise
+				.then !~>
+					@_lookups_in_progress.delete(node_id)
+				.catch !~>
+					@_lookups_in_progress.delete(node_id)
 			promise
 		/**
 		 * @param {!Uint8Array}					node_id

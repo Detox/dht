@@ -251,6 +251,7 @@
       this._transactions_in_progress = new Map;
       this._timeouts_in_progress = new Set;
       this._values = Values_cache(values_cache_size);
+      this._lookups_in_progress = ArrayMap();
       this._state_update_interval = intervalSet(this._timeouts['STATE_UPDATE_INTERVAL'], function(){
         var i$, ref$, len$, peer_id;
         for (i$ = 0, len$ = (ref$ = this$._dht['get_state']()[2]).length; i$ < len$; ++i$) {
@@ -312,13 +313,23 @@
        * @return {!Promise} Resolves with `!Array<!Uint8Array>`
        */,
       'lookup': function(node_id, number){
-        var promise;
+        var promise, this$ = this;
         number == null && (number = this._bucket_size);
         if (this._destroyed) {
           return Promise.reject();
         }
+        promise = this._lookups_in_progress.get(node_id);
+        if (promise) {
+          return promise;
+        }
         promise = this._handle_lookup(node_id, this._dht['start_lookup'](node_id, number));
         promise['catch'](error_handler);
+        this._lookups_in_progress.set(node_id, promise);
+        promise.then(function(){
+          this$._lookups_in_progress['delete'](node_id);
+        })['catch'](function(){
+          this$._lookups_in_progress['delete'](node_id);
+        });
         return promise;
       }
       /**

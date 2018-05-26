@@ -16,7 +16,7 @@
     random_bytes = detoxUtils.random_bytes;
     test('Detox DHT', function(t){
       var instances, nodes, bootstrap_node_id, bootstrap_node_instance, i$;
-      t.plan(16);
+      t.plan(17);
       console.log('Creating instances...');
       function DHT(id){
         var instance;
@@ -91,8 +91,12 @@
           t.equal(value.join(','), mutable_value2.join(','), 'getting mutable value v1 on node b succeeded');
           return node_c.get_value(key_mutable);
         }).then(function(value){
+          var random_id, promise;
           t.equal(value.join(','), mutable_value2.join(','), 'getting mutable value v1 on node c succeeded');
-          return node_a.lookup(random_bytes(32));
+          random_id = random_bytes(32);
+          promise = node_a.lookup(random_id);
+          t.ok(promise === node_a.lookup(random_id), 'Subsequent lookups for the same ID return the same exact promise');
+          return promise;
         }).then(function(lookup_nodes){
           t.ok(lookup_nodes.length >= 2 && lookup_nodes.length <= 20, 'Found at most 20 nodes on random lookup, but not less than 2');
           t.ok(lookup_nodes[0] instanceof Uint8Array, 'Node has correct ID type');
