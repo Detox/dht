@@ -468,11 +468,13 @@
       }
       /**
        * @param {!Uint8Array} key
+       * @param {number=}		number	Getting value involves lookup, this parameter is the same as `number` parameter in `lookup()` method, defaults to bucket size
        *
        * @return {!Promise} Resolves with value on success
        */,
-      'get_value': function(key){
+      'get_value': function(key, number){
         var value, promise, this$ = this;
+        number == null && (number = this._bucket_size);
         if (this._destroyed) {
           return Promise.reject();
         }
@@ -480,7 +482,7 @@
         if (value && are_arrays_equal(blake2b_256(value), key)) {
           return Promise.resolve(value);
         }
-        promise = this['lookup'](key).then(function(peers){
+        promise = this['lookup'](key, number).then(function(peers){
           return new Promise(function(resolve, reject){
             var pending, stop, found, i$, ref$, len$, peer_id;
             pending = peers.length;
@@ -613,11 +615,13 @@
       /**
        * @param {!Uint8Array} key		As returned by `make_*_value()` methods
        * @param {!Uint8Array} data	As returned by `make_*_value()` methods
+       * @param {number=}		number	Putting value involves lookup, this parameter is the same as `number` parameter in `lookup()` method, defaults to bucket size
        *
        * @return {!Promise}
        */,
-      'put_value': function(key, data){
+      'put_value': function(key, data, number){
         var this$ = this;
+        number == null && (number = this._bucket_size);
         if (this._destroyed) {
           return Promise.reject();
         }
@@ -625,7 +629,7 @@
           return Promise.reject();
         }
         this._values.add(key, data);
-        return this['lookup'](key).then(function(peers){
+        return this['lookup'](key, number).then(function(peers){
           var command_data, i$, len$, peer_id, results$ = [];
           if (!peers.length) {
             return;

@@ -386,17 +386,18 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 			@_dht['del_peer'](peer_id)
 		/**
 		 * @param {!Uint8Array} key
+		 * @param {number=}		number	Getting value involves lookup, this parameter is the same as `number` parameter in `lookup()` method, defaults to bucket size
 		 *
 		 * @return {!Promise} Resolves with value on success
 		 */
-		'get_value' : (key) ->
+		'get_value' : (key, number = @_bucket_size) ->
 			if @_destroyed
 				return Promise.reject()
 			value	= @_values.get(key)
 			# Return immutable value from cache immediately, but for mutable try to find never version first
 			if value && are_arrays_equal(blake2b_256(value), key)
 				return Promise.resolve(value)
-			promise	= @'lookup'(key).then (peers) ~>
+			promise	= @'lookup'(key, number).then (peers) ~>
 				new Promise (resolve, reject) !~>
 					pending	= peers.length
 					stop	= false
@@ -502,16 +503,17 @@ function Wrapper (detox-crypto, detox-utils, async-eventer, es-dht)
 		/**
 		 * @param {!Uint8Array} key		As returned by `make_*_value()` methods
 		 * @param {!Uint8Array} data	As returned by `make_*_value()` methods
+		 * @param {number=}		number	Putting value involves lookup, this parameter is the same as `number` parameter in `lookup()` method, defaults to bucket size
 		 *
 		 * @return {!Promise}
 		 */
-		'put_value' : (key, data) ->
+		'put_value' : (key, data, number = @_bucket_size) ->
 			if @_destroyed
 				return Promise.reject()
 			if !@'verify_value'(key, data)
 				return Promise.reject()
 			@_values.add(key, data)
-			@'lookup'(key).then (peers) ~>
+			@'lookup'(key, number).then (peers) ~>
 				if !peers.length
 					return
 				command_data	= compose_put_value_request(key, data)

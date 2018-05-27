@@ -68,7 +68,10 @@ Peer would not necessarily be added to k-bucket though, depending on internal st
 ### detox_dht.DHT.del_peer(peer_id : Uint8Array)
 Delete peer `peer_id`, for instance, when peer is disconnected.
 
-### detox_dht.DHT.get_value(value : Uint8Array) : Promise
+### detox_dht.DHT.get_value(key : Uint8Array, number = bucket_size : number) : Promise
+* `key` - key of the value being searched for
+* `number` - getting value involves lookup, this parameter is the same as `number` parameter in `lookup()` method, defaults to bucket size
+
 Resolves with value on success.
 
 ### detox_dht.DHT.make_immutable_value(key : Uint8Array) : Uint8Array[]
@@ -87,8 +90,10 @@ Allows to check whether `key` and `data` as returned by `make_*_value()` methods
 
 Returns `value` if correct data and `null` otherwise.
 
-### detox_dht.DHT.put_value(key : Uint8Array, data : Uint8Array) : Promise
-Put `key` and `data` as returned by `make_*_value()` into DHT.
+### detox_dht.DHT.put_value(key : Uint8Array, data : Uint8Array, number = bucket_size : number) : Promise
+* `key` - as returned by `make_*_value()`
+* `data` - as returned by `make_*_value()`
+* `number` - getting value involves lookup, this parameter is the same as `number` parameter in `lookup()` method, defaults to bucket size
 
 ### detox_dht.DHT.destroy()
 Destroy instance.
