@@ -591,7 +591,7 @@
         }
         payload = compose_mutable_value(version, value);
         signature = create_signature(payload, public_key, private_key);
-        data = concat_arrays([payload, signature]);
+        data = concat_arrays(payload, signature);
         return [public_key, data];
       }
       /**
